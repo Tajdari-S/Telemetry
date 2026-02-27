@@ -1,0 +1,28 @@
+# Python / env
+__pycache__/
+*.pyc
+.venv/
+venv/
+.env
+
+# Your run artifacts (don’t push)
+data/raw_telemetry/
+data/datasets/
+data/models/
+
+# WAVE generated artifacts (don’t push)
+Wave/data/
+Wave/**/data/
+Wave/**/*.ncu-rep
+Wave/**/*.qdrep
+Wave/**/*.nsys-rep
+Wave/**/*.sqlite
+Wave/**/*.csv
+Wave/**/*.parquet
+Wave/**/*.log
+Wave/**/*timing*.json
+
+# editor
+*.swp
+*.swo
+.DS_Store
