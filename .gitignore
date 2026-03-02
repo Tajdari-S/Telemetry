@@ -6,12 +6,12 @@ venv/
 .env
 
 # Your run artifacts (don’t push)
-data/raw_telemetry/
-data/datasets/
-data/models/
+#data/raw_telemetry/
+#data/datasets/
+#data/models/
 
 # WAVE generated artifacts (don’t push)
-Wave/data/
+#Wave/data/
 Wave/**/data/
 Wave/**/*.ncu-rep
 Wave/**/*.qdrep
