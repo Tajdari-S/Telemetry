@@ -622,7 +622,7 @@ def extract_features(res: dict) -> dict:
 # ══════════════════════════════════════════════════════════════════════════════
 
 CASE_META = {
-    "BASELINE_TRAIN": ("Baseline Training",    "navy",        "▲", "training"),
+    "BASELINE_TRAIN": ("Baseline Training",    "navy",        "^", "training"),
     "BASELINE_INFER": ("Baseline Inference",   "forestgreen", "o", "inference"),
     "EC1":            ("EC-1 Phantom Train",   "crimson",     "s", "inference"),
     "EC2":            ("EC-2 Silent Train",    "darkorange",  "s", "training"),
@@ -706,7 +706,7 @@ def plot_feature_scatter(feats: dict):
     # Legend
     from matplotlib.lines import Line2D
     handles = [
-        Line2D([0],[0], marker="▲", color="w", markerfacecolor="navy",  markersize=11, label="True training",  markeredgecolor="black"),
+        Line2D([0],[0], marker="^", color="w", markerfacecolor="navy",  markersize=11, label="True training",  markeredgecolor="black"),
         Line2D([0],[0], marker="o", color="w", markerfacecolor="green", markersize=11, label="True inference", markeredgecolor="black"),
         Line2D([0],[0], marker="s", color="w", markerfacecolor="gray",  markersize=11, label="Adversarial EC", markeredgecolor="black"),
     ]
