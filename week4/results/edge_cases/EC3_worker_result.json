@@ -1,1 +1,1 @@
-{"true_class": "training", "n_params": 18010250, "grad_bytes": 72041000, "fwd_ms": 2.342476509511471, "bwd_ms": 4.156347364187241, "allreduce_ms": 0.580975806451613, "allreduce_per_step": false, "accum_factor": 16}
+{"true_class": "training", "n_params": 18010250, "grad_bytes": 72041000, "fwd_ms": 2.406567055732012, "bwd_ms": 3.7465784698724747, "allreduce_ms": 0.580975806451613, "allreduce_per_step": false, "accum_factor": 16}
