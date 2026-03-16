@@ -564,6 +564,11 @@ def run_case(name: str) -> dict:
     else:
         log.info(f"[{name}] done in {elapsed:.1f}s, {len(df_tele)} telemetry samples")
 
+    # Save telemetry DataFrame to disk so plots can reload it if process restarts
+    tele_path = RESULTS / f"{name}_telemetry.json"
+    if not df_tele.empty:
+        tele_path.write_text(df_tele.to_json(orient="records"))
+
     # Load worker results
     worker_res = {}
     try:
@@ -646,6 +651,12 @@ def plot_telemetry_traces(all_results: list):
         name  = res["name"]
         label, color, marker, kind = CASE_META.get(name, (name, "gray", "o", "?"))
         df    = res["telemetry"]
+        # Fall back to saved JSON if in-memory df is empty (e.g. after restart)
+        if df.empty:
+            tele_path = RESULTS / f"{name}_telemetry.json"
+            if tele_path.exists():
+                df = pd.read_json(tele_path, orient="records")
+                res["telemetry"] = df
         feat  = extract_features(res)
         if df.empty:
             continue
