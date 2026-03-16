@@ -61,14 +61,14 @@ deliberately blur these boundaries by attacking specific classifier features.
 
 | Case | True Task | GPU Util | Power (W) | Fwd (ms) | Bwd (ms) | NVLink (MB/step) | Allreduce (ms) |
 |------|----------|---------|-----------|---------|---------|-----------------|---------------|
-| Baseline Training | training | 3.5% | 101 | 2.36 | 3.72 | 72.04 | 0.581 |
-| Baseline Inference | inference | 1.6% | 99 | 1.51 | 0.00 | 0.00 | 0.000 |
-| EC-1 Phantom Train | inference | 2.1% | 99 | 1.52 | 0.00 | 72.04 | 0.772 |
-| EC-2 Silent Train | training | 2.6% | 103 | 2.55 | 3.57 | 0.00 | 0.581 |
-| EC-3 Sparse Sync | training | 4.9% | 105 | 2.34 | 4.16 | 0.00 | 0.581 |
-| EC-4 Mining-Like Inf | inference | 19.6% | 220 | 26.28 | 0.00 | 0.00 | 0.000 |
-| EC-5 Frozen Backbone | training | 1.0% | 101 | 1.90 | 0.98 | 0.04 | 0.000 |
-| EC-6 Low-Intensity | training | 0.8% | 96 | 2.17 | 2.89 | 0.29 | 0.002 |
+| Baseline Training | training | 3.3% | 101 | 2.13 | 5.52 | 72.04 | 0.581 |
+| Baseline Inference | inference | 1.7% | 91 | 1.51 | 0.00 | 0.00 | 0.000 |
+| EC-1 Phantom Train | inference | 1.0% | 95 | 1.53 | 0.00 | 72.04 | 0.813 |
+| EC-2 Silent Train | training | 3.1% | 101 | 2.43 | 3.68 | 0.00 | 0.581 |
+| EC-3 Sparse Sync | training | 3.3% | 100 | 2.41 | 3.75 | 0.00 | 0.581 |
+| EC-4 Mining-Like Inf | inference | 18.5% | 213 | 26.10 | 0.00 | 0.00 | 0.000 |
+| EC-5 Frozen Backbone | training | 1.3% | 96 | 1.89 | 1.07 | 0.04 | 0.000 |
+| EC-6 Low-Intensity | training | 0.9% | 96 | 1.89 | 3.02 | 0.29 | 0.002 |
 
 ---
 
