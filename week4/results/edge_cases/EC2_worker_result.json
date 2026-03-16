@@ -1,0 +1,1 @@
+{"true_class": "training", "n_params": 18010250, "grad_bytes": 72041000, "fwd_ms": 2.547638025134802, "bwd_ms": 3.568958304822445, "allreduce_ms": 0.580975806451613, "allreduce_per_step": false, "accum_factor": 80}
