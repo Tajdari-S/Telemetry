@@ -537,7 +537,151 @@ The original project goal is to detect ML training from telemetry alone. The key
 
 ---
 
-## Part 10 — Figures Reference Table
+## Part 10 — Training Code and Algorithm
+
+This section describes exactly what code runs on the GPU during every experiment. Understanding this is important because the goal was never to train a useful AI model — it was to produce realistic GPU hardware activity for telemetry classification.
+
+### The Model: A Custom CNN
+
+All experiments use the same parametric CNN defined in `scale_to_bottleneck.py` (`make_model(n_ch)`). Here is the full architecture:
+
+```
+Input shape: (batch_size, 3, 32, 32)
+             └── batch_size images, 3 colour channels, 32×32 pixels
+
+Layer 1: Conv2d(3 → n_ch, kernel=3×3, padding=1)  + BatchNorm + ReLU
+         Output: (batch, n_ch, 32, 32)
+
+Layer 2: Conv2d(n_ch → 2×n_ch, kernel=3×3, padding=1) + BatchNorm + ReLU
+         MaxPool2d(2×2)
+         Output: (batch, 2·n_ch, 16, 16)
+
+Layer 3: Conv2d(2n → 4n, kernel=3×3, padding=1) + BatchNorm + ReLU
+         Output: (batch, 4·n_ch, 16, 16)
+
+Layer 4: Conv2d(4n → 4n, kernel=3×3, padding=1) + BatchNorm + ReLU
+         MaxPool2d(2×2)
+         Output: (batch, 4·n_ch, 8, 8)
+
+Layer 5: Conv2d(4n → 8n, kernel=3×3, padding=1) + BatchNorm + ReLU
+         MaxPool2d(2×2)
+         Output: (batch, 8·n_ch, 4, 4)
+
+Layer 6: Conv2d(8n → 8n, kernel=3×3, padding=1) + BatchNorm + ReLU
+         Output: (batch, 8·n_ch, 4, 4)
+
+AdaptiveAvgPool2d(1×1)  → collapses spatial dimensions
+Flatten                 → (batch, 8·n_ch)
+Linear(8·n_ch → 10)     → (batch, 10) — 10 class scores
+```
+
+**BatchNorm (Batch Normalisation):** After each convolution, normalises the activations to have mean=0 and std=1 across the batch. This stabilises training and is standard in modern CNNs.
+
+**ReLU:** Replaces any negative number with zero. A simple nonlinearity that lets the model learn complex patterns.
+
+**Parameter count by n_ch:**
+
+| n_ch | ~Parameters | ~Model size (FP32) | Gradient size |
+|------|-------------|-------------------|---------------|
+| 8    | 72K         | 0.3 MB            | 0.3 MB        |
+| 16   | 284K        | 1.1 MB            | 1.1 MB        |
+| 32   | 1.1M        | 4.5 MB            | 4.5 MB        |
+| 64   | 4.5M        | 18 MB             | 18 MB         |
+| 128  | 18M         | 72 MB             | 72 MB         |
+| 256  | 72M         | 288 MB            | 288 MB        |
+| 512  | 288M        | 1.15 GB           | 1.15 GB       |
+
+### The Training Algorithm: Mini-Batch SGD with Momentum
+
+The algorithm used is **Stochastic Gradient Descent (SGD) with momentum** — one of the oldest and most widely used optimisers in deep learning.
+
+**What SGD does:** Every step, it nudges each weight in the direction that reduces the loss (prediction error). The "gradient" tells us the direction and size of the nudge.
+
+**What momentum does:** Keeps a running average of recent gradient directions (like a ball rolling downhill that doesn't immediately change direction). This smooths out noisy gradient estimates and helps training converge faster.
+
+**The full per-step algorithm in pseudocode:**
+
+```
+Step 1 — FORWARD PASS
+  data   = random tensor of shape (batch_size, 3, 32, 32)   ← fake images
+  labels = random integers in [0, 9]                         ← fake class labels
+  output = model(data)               ← run all 6 layers, get 10 class scores
+  loss   = CrossEntropyLoss(output, labels)
+         = -log(probability assigned to the correct class)
+         ← measures how wrong the prediction is
+
+Step 2 — BACKWARD PASS (gradient computation)
+  loss.backward()
+  ← PyTorch automatically computes ∂loss/∂w for every weight w
+     using the chain rule of calculus (backpropagation)
+  ← In DDP: NCCL all-reduce fires here over NVLink
+     averages gradients from both GPUs: grad = (grad_GPU0 + grad_GPU1) / 2
+
+Step 3 — WEIGHT UPDATE (SGD with momentum)
+  For each weight w:
+    velocity = momentum × velocity + gradient    ← momentum term (0.9)
+    w = w - learning_rate × velocity             ← update (lr = 0.01)
+```
+
+**What CrossEntropyLoss is:** A standard loss function for classification tasks. It takes the model's 10 output scores, converts them to probabilities (via softmax), and penalises the model for assigning low probability to the correct class. The maximum possible loss is infinity; perfect predictions give loss = 0.
+
+**AMP (Automatic Mixed Precision):** In some experiments, `torch.amp.autocast("cuda")` is used around the forward pass. This automatically uses FP16 (16-bit floating point, half precision) for operations where it is safe, and keeps FP32 (32-bit) for operations that need precision (like BatchNorm statistics). FP16 operations run at up to 2× the throughput on the H100 tensor cores, and use half the memory bandwidth for activations.
+
+### Why Random Data?
+
+**The data and labels are entirely random — there is nothing to learn.** The model will not converge to any useful accuracy. This is intentional for three reasons:
+
+1. **Hardware stress, not learning:** We want to exercise the GPU's compute units, memory bandwidth, and NVLink — not train a useful classifier. Random data produces identical GPU activity patterns to real data.
+
+2. **No dataset dependency:** We do not need ImageNet, CIFAR-10, or any real dataset. This makes the experiments fully reproducible on any machine.
+
+3. **No data loading bottleneck:** Real datasets introduce CPU preprocessing, disk I/O, and `DataLoader` worker threads. These are not the bottleneck we want to study. Random tensors go directly from `torch.randn(...)` into GPU memory, isolating the pure GPU hardware behaviour.
+
+**Verification:** The telemetry patterns (GPU utilisation, power, SM clock, memory bandwidth) are identical whether training on random or real data, as long as the model architecture and batch size are the same. The GPU does not "know" whether the numbers it is multiplying are meaningful.
+
+### DDP Gradient All-Reduce: The NVLink Algorithm
+
+When training on 2 GPUs with DDP, after each backward pass, both GPUs must have the same gradient values before they can update weights. The algorithm used is **NCCL ring all-reduce**:
+
+```
+Before all-reduce:
+  GPU 0 has: grad_A  (gradients computed on batch A)
+  GPU 1 has: grad_B  (gradients computed on batch B)
+
+NCCL ring all-reduce (2-GPU case):
+  Step 1: GPU 0 sends half its gradients to GPU 1 over NVLink
+          GPU 1 sends half its gradients to GPU 0 over NVLink
+          (both transfers happen simultaneously — full-duplex NVLink)
+  Step 2: Each GPU adds what it received to what it kept
+  Step 3: Each GPU sends the sum back
+  Result: Both GPUs now hold (grad_A + grad_B)
+
+Divide by 2: Both GPUs now hold (grad_A + grad_B) / 2
+             ← the average gradient across both data shards
+
+Weight update: Both GPUs apply the same SGD update
+               → model weights stay identical on both GPUs
+```
+
+**Bytes transferred:** For 2 GPUs, the all-reduce transfers exactly `param_count × 4 bytes` in total (one round trip of the full gradient tensor). For n_ch=128 (18M params): 72 MB transferred per step. At 124 GB/s NVLink bandwidth: 0.58 ms per all-reduce.
+
+**Overlap with backward pass:** PyTorch DDP does not wait for the full backward pass to finish before starting the all-reduce. As soon as the gradients for the last few layers are computed, NCCL begins transferring them while the GPU continues computing gradients for earlier layers. This overlap is why the measured backward+allreduce time is close to the backward-only time for small models.
+
+### Summary: What the GPU Is Actually Doing
+
+Every 26 milliseconds (at n_ch=64, batch=64), each GPU:
+1. Reads 161 MB of activation data from HBM3 (forward pass)
+2. Performs ~53 billion floating-point multiplications and additions
+3. Writes gradients back to HBM3 (backward pass)
+4. Sends 18 MB of gradient data over NVLink to the other GPU
+5. Receives 18 MB of gradient data from the other GPU
+6. Adds 4.5 million numbers to 4.5 million momentum buffers (SGD update)
+
+Multiplied over a full run: at 1M samples (15,625 steps at batch=64), each GPU performs ~830 trillion floating-point operations and transfers ~1.1 TB over NVLink.
+
+---
+
+## Part 11 — Figures Reference Table
 
 | Figure filename | What it shows | Key takeaway |
 |----------------|--------------|--------------|
