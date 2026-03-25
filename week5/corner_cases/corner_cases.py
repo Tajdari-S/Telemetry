@@ -520,9 +520,13 @@ def run_cc_f_vit(handle, results):
                     results.append(r)
                     log.info(f"  {name:45s}  AI={r['ai']:6.0f}  "
                              f"{r['achieved_tflops']:6.1f} TFLOPS  {r['regime']}")
-                except torch.cuda.OutOfMemoryError:
-                    torch.cuda.empty_cache(); break
-            del model; torch.cuda.empty_cache()
+                except (torch.cuda.OutOfMemoryError, torch.AcceleratorError, RuntimeError):
+                    try: torch.cuda.empty_cache()
+                    except Exception: pass
+                    break
+            try:
+                del model; torch.cuda.empty_cache()
+            except Exception: pass
         except Exception as e:
             log.warning(f"  skip {vit_name}: {e}")
 
@@ -547,7 +551,10 @@ def main():
             fn(handle, results)
         except Exception as e:
             log.error(f"Group failed: {fn.__name__}: {e}")
-        torch.cuda.empty_cache()
+        try:
+            torch.cuda.empty_cache()
+        except Exception:
+            pass
 
     out_path = OUT_DIR / "corner_cases_results.json"
     with open(out_path, "w") as f:
