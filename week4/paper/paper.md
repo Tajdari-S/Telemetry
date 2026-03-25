@@ -19,10 +19,12 @@ Traditional workload monitoring relies on application-level instrumentation: pro
 Hardware performance counters exposed through NVIDIA's Management Library (NVML) offer a non-intrusive alternative. These counters — GPU utilization, memory utilization, power consumption, NVLink traffic, encoder/decoder activity, and temperature — are accessible from the host with no overhead imposed on the running workload and no cooperation required from the tenant. The question we address in this paper is whether these counters, sampled at 100–200 ms intervals and processed through standard machine learning classifiers, can reliably identify workload classes with sufficient accuracy and robustness to be useful in practice.
 
 Prior work has characterized deep learning workloads at the framework and system level (Jain et al., 2019; Luo et al., 2020), analyzed GPU side-channel risks (Wei et al., 2020), and studied distributed training communication patterns (Li et al., 2020; Peng et al., 2019). However, no prior work has systematically evaluated telemetry-based classification across a range of workload types with adversarial robustness analysis, nor has any study grounded the classification framework in the roofline performance model to provide mechanistic understanding of feature informativeness.
+// my note: it is not accurate. we will add trainign tasks and also discuss wave paper.
 
 This paper makes the following contributions:
 
 **(i) Roofline-Aware Fingerprinting Framework.** We define telemetry fingerprinting in terms of the roofline model (Williams et al., 2009), characterizing workloads by their arithmetic intensity (AI) and the resulting hardware utilization regime. We show that the ridge points of the H100 (20.0 FLOP/byte at FP32, 591 FLOP/byte at FP16) divide the AI spectrum into interpretable classification regions that correspond directly to observable telemetry signatures.
+// note: we add A100 results and nvlink as well
 
 **(ii) Five Systematic Scaling Experiments.** We conduct controlled sweeps over batch size (bs=1 to bs=1024), model width (n\_ch=8 to n\_ch=512), dataset scale (256 to 1,048,576 samples), and model accuracy to characterize every major regime transition on the H100 and measure how each dimension affects the telemetry feature vector.
 
