@@ -16,11 +16,11 @@ echo "============================================================"
 
 echo ""
 echo "[1/2] Feature engineering (sliding windows: 30s, 60s, 120s)"
-$PYTHON feature_engineering.py
+$PYTHON scripts/feature_engineering.py
 
 echo ""
 echo "[2/2] Training classifiers (RF / XGBoost / SVM / LR)"
-$PYTHON train_classifiers.py
+$PYTHON scripts/train_classifiers.py
 
 echo ""
 echo "============================================================"

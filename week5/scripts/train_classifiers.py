@@ -53,7 +53,7 @@ warnings.filterwarnings("ignore")
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s", datefmt="%H:%M:%S")
 log = logging.getLogger(__name__)
 
-WEEK5   = Path(__file__).parent
+WEEK5   = Path(__file__).parent.parent   # week5/
 RESULTS = WEEK5 / "results"
 PLOTS   = WEEK5 / "plots"
 REPORTS = WEEK5 / "reports"

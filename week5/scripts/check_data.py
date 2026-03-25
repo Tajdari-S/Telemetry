@@ -7,7 +7,7 @@ from pathlib import Path
 sys.path.insert(0, "/root/xgb_pkg")
 import pandas as pd
 
-WEEK4 = Path(__file__).parent.parent.parent / "week4"
+WEEK4 = Path(__file__).parent.parent.parent / "week4"   # Telemetry/week4/
 
 print("=" * 60)
 print("Week 5 — Data Source Diagnostics")

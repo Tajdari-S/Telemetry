@@ -32,8 +32,8 @@ from pathlib import Path
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s", datefmt="%H:%M:%S")
 log = logging.getLogger(__name__)
 
-WEEK4  = Path(__file__).parent.parent / "week4"
-WEEK5  = Path(__file__).parent
+WEEK4   = Path(__file__).parent.parent.parent / "week4"
+WEEK5   = Path(__file__).parent.parent          # week5/
 RESULTS = WEEK5 / "results"
 RESULTS.mkdir(exist_ok=True)
 
@@ -127,22 +127,30 @@ def load_ddp_parquets() -> pd.DataFrame:
 
 
 def load_dataset_scale_parquets() -> pd.DataFrame:
-    """Load dataset_scale telemetry parquets."""
+    """Load dataset_scale telemetry parquets.
+    Schema: timestamp, gpu, gpu_util, mem_util, power_w, mem_used_mb, sm_clock_mhz, mem_clock_mhz, temp_c
+    """
     paths = glob.glob(str(WEEK4 / "results" / "dataset_scale" / "*" / "telemetry.parquet"))
     frames = []
     for p in paths:
         try:
             df = pd.read_parquet(p)
             n = Path(p).parent.name  # e.g. "n65536"
+            # Rename dataset_scale-specific columns to standard schema
+            rename_map = {
+                "timestamp":    "ts",
+                "gpu_util":     "gpu_utilization_pct",
+                "mem_util":     "mem_utilization_pct",
+                "power_w":      "power_draw_w",
+                "temp_c":       "temperature_c",
+            }
+            df = df.rename(columns={k: v for k, v in rename_map.items() if k in df.columns})
             if "workload_label" not in df.columns:
-                df["workload_label"] = f"training_ddp_{n}"
+                df["workload_label"] = "training_dual_gpu_dp"
             if "run_id" not in df.columns:
                 df["run_id"] = f"dscale_{n}"
-            # Normalise ts
-            if "timestamp_epoch" in df.columns:
+            if "ts" not in df.columns and "timestamp_epoch" in df.columns:
                 df = df.rename(columns={"timestamp_epoch": "ts"})
-            elif "ts" not in df.columns and "timestamp_utc" in df.columns:
-                df["ts"] = pd.to_datetime(df["timestamp_utc"]).astype("int64") / 1e9
             frames.append(df)
         except Exception as e:
             log.warning(f"skip {p}: {e}")
