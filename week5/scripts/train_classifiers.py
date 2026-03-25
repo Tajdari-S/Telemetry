@@ -417,7 +417,7 @@ def main():
     all_rows  = []
     feat_imp_store = {}
 
-    for win_sec in [30, 60, 120]:
+    for win_sec in [5, 15, 30]:
         log.info(f"\n── Window {win_sec}s ──")
         try:
             df = load_windows(win_sec)
@@ -439,7 +439,7 @@ def main():
             all_rows.append(row)
 
         # Detailed plots for 30s binary (most granular)
-        if win_sec == 30:
+        if win_sec == 5:
             plot_pca(X, df["binary_label"], "binary", win_sec)
             # Simple train/test split for CM and ROC (last fold)
             cv = StratifiedGroupKFold(n_splits=N_SPLITS, shuffle=True, random_state=RANDOM_STATE)
@@ -491,7 +491,7 @@ def main():
             for name, clf in classifiers.items():
                 row = evaluate(clf, X_mc, y_mc, g_mc, "multiclass", name, win_sec)
                 all_rows.append(row)
-            if win_sec == 30:
+            if win_sec == 5:
                 cv = StratifiedGroupKFold(n_splits=N_SPLITS, shuffle=True, random_state=RANDOM_STATE)
                 folds = list(cv.split(X_mc, y_mc, g_mc))
                 tr_idx, te_idx = folds[-1]

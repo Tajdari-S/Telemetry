@@ -298,31 +298,44 @@ def extract_window_features(chunk: pd.DataFrame) -> dict:
 
 
 def sliding_windows(df: pd.DataFrame, window_sec: float, stride_sec: float) -> pd.DataFrame:
-    """Apply sliding windows per run_id, return feature DataFrame."""
+    """Apply sliding windows per run_id, return feature DataFrame.
+
+    For runs shorter than window_sec, the full run is treated as one window
+    (min 5 samples required).  This preserves short edge-case and dataset-scale
+    traces that would otherwise produce zero windows.
+    """
     results = []
     for run_id, run_df in df.groupby("run_id"):
         run_df = run_df.sort_values("ts").reset_index(drop=True)
         t_start = run_df["ts"].iloc[0]
         t_end   = run_df["ts"].iloc[-1]
+        duration = t_end - t_start
         label   = run_df["workload_label"].iloc[0]
         binary  = run_df["binary_label"].iloc[0]
         is_tr   = run_df["is_training"].iloc[0]
 
-        wstart = t_start
-        while wstart + window_sec <= t_end + 1:
-            wend = wstart + window_sec
-            chunk = run_df[(run_df["ts"] >= wstart) & (run_df["ts"] < wend)]
-            if len(chunk) >= 3:
-                feats = extract_window_features(chunk)
-                feats["run_id"]        = run_id
-                feats["window_start"]  = wstart
-                feats["window_sec"]    = window_sec
-                feats["n_samples"]     = len(chunk)
-                feats["workload_label"] = label
-                feats["binary_label"]  = binary
-                feats["is_training"]   = is_tr
-                results.append(feats)
-            wstart += stride_sec
+        def emit(chunk):
+            if len(chunk) < 5:
+                return
+            feats = extract_window_features(chunk)
+            feats["run_id"]         = run_id
+            feats["window_start"]   = chunk["ts"].iloc[0]
+            feats["window_sec"]     = window_sec
+            feats["n_samples"]      = len(chunk)
+            feats["workload_label"] = label
+            feats["binary_label"]   = binary
+            feats["is_training"]    = is_tr
+            results.append(feats)
+
+        if duration < window_sec:
+            # Short run: use the entire run as one window
+            emit(run_df)
+        else:
+            wstart = t_start
+            while wstart + window_sec <= t_end + 1:
+                chunk = run_df[(run_df["ts"] >= wstart) & (run_df["ts"] < wstart + window_sec)]
+                emit(chunk)
+                wstart += stride_sec
 
     if not results:
         return pd.DataFrame()
@@ -342,7 +355,7 @@ def main():
     )
     log.info(f"Feature count per window: {len(feature_cols)}")
 
-    for win_sec, stride_sec in [(30, 15), (60, 30), (120, 60)]:
+    for win_sec, stride_sec in [(5, 2), (15, 7), (30, 15)]:
         log.info(f"Extracting windows: {win_sec}s window, {stride_sec}s stride ...")
         df_win = sliding_windows(df_raw, window_sec=win_sec, stride_sec=stride_sec)
         if df_win.empty:
