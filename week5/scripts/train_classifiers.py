@@ -101,7 +101,7 @@ def build_classifiers():
         ("scaler", StandardScaler()),
         ("clf",    LogisticRegression(
                        C=1.0, max_iter=1000, class_weight="balanced",
-                       solver="lbfgs", multi_class="auto",
+                       solver="lbfgs",
                        random_state=RANDOM_STATE))])
 
     return {"RandomForest": rf, "XGBoost": xgb_clf, "SVM_RBF": svm, "LogisticReg": lr}
@@ -431,17 +431,33 @@ def main():
 
         classifiers = build_classifiers()
 
-        # ── Task A: Binary ────────────────────────────────────────────────────
-        log.info("  Task A: Binary")
-        y_bin, le_bin = encode_labels(df["binary_label"])
+        # ── Task A: True Binary (training=1 vs all others=0) ─────────────────
+        log.info("  Task A: Binary (training vs rest)")
+        y_bin = df["is_training"].values.astype(int)
+        bin_labels = np.array(["non_training", "training"])
+        le_bin_classes = bin_labels
         for name, clf in classifiers.items():
-            row = evaluate(clf, X, y_bin, groups, "binary", name, win_sec)
+            # Manually evaluate to use is_training directly
+            cv = StratifiedGroupKFold(n_splits=N_SPLITS, shuffle=True, random_state=RANDOM_STATE)
+            accs, f1s = [], []
+            for tr_idx, te_idx in cv.split(X, y_bin, groups):
+                clf.fit(X[tr_idx], y_bin[tr_idx])
+                y_pred = clf.predict(X[te_idx])
+                accs.append(accuracy_score(y_bin[te_idx], y_pred))
+                f1s.append(f1_score(y_bin[te_idx], y_pred, average="macro", zero_division=0))
+            row = {
+                "task": "binary", "model": name, "window_sec": win_sec,
+                "acc_mean": np.mean(accs), "acc_std": np.std(accs),
+                "f1_macro_mean": np.mean(f1s), "f1_macro_std": np.std(f1s),
+                "f1_w_mean": np.mean(f1s), "f1_w_std": np.std(f1s),
+            }
+            log.info(f"  [{name:14s}] binary (training vs rest)          "
+                     f"acc={row['acc_mean']:.4f}±{row['acc_std']:.4f}  f1={row['f1_macro_mean']:.4f}")
             all_rows.append(row)
 
-        # Detailed plots for 30s binary (most granular)
+        # Detailed plots for 5s window
         if win_sec == 5:
             plot_pca(X, df["binary_label"], "binary", win_sec)
-            # Simple train/test split for CM and ROC (last fold)
             cv = StratifiedGroupKFold(n_splits=N_SPLITS, shuffle=True, random_state=RANDOM_STATE)
             folds = list(cv.split(X, y_bin, groups))
             tr_idx, te_idx = folds[-1]
@@ -454,7 +470,7 @@ def main():
                 plot_roc(clf, X_tr, y_tr, X_te, y_te, name, win_sec, ax_roc)
             ax_roc.plot([0, 1], [0, 1], "k--", lw=1)
             ax_roc.set_xlabel("FPR"); ax_roc.set_ylabel("TPR")
-            ax_roc.set_title(f"ROC — Binary ({win_sec}s window)")
+            ax_roc.set_title(f"ROC — Binary training vs rest ({win_sec}s window)")
             ax_roc.legend(); ax_roc.grid(alpha=0.3)
             plt.tight_layout()
             roc_path = PLOTS / f"roc_binary_{win_sec}s.png"
@@ -462,8 +478,13 @@ def main():
             plt.close()
             log.info(f"  ROC saved: {roc_path.name}")
 
+            from sklearn.preprocessing import LabelEncoder as _LE
+            le_bin = _LE(); le_bin.fit(["non_training", "training"])
+            y_tr_str = np.where(y_tr == 1, "training", "non_training")
+            y_te_str = np.where(y_te == 1, "training", "non_training")
             for name, clf in classifiers.items():
-                plot_cm(clf, X_tr, y_tr, X_te, y_te, le_bin,
+                plot_cm(clf, X_tr, le_bin.transform(y_tr_str),
+                             X_te, le_bin.transform(y_te_str), le_bin,
                         "binary", name, win_sec)
                 imp = plot_feature_importance(clf, feature_cols, name, "binary", win_sec)
                 if imp:
