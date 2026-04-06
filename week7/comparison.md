@@ -64,40 +64,24 @@ and H100 (Weeks 4–5).
 
 ### Comparison with Prior Weeks
 
-**GPU Utilization Patterns** (actual measured, per workload):
+**GPU Utilization Patterns** (approximate, per workload category):
 
 | Category | Week 3 (A100) | Week 7 (B200) | Change |
 |----------|--------------|--------------|--------|
-| Idle | ~0% | **0.0%** | — |
-| MLP Training | ~6% | ~0%* | B200 too fast for 1Hz |
-| Mining Proxy | ~39% | ~0%* | B200 too fast for 1Hz |
-| Inference (ResNet-50) | ~65% | **36.2%** | Lower; B200 finishes faster |
-| ResNet Training (FP32) | ~98% | **32.8%** | Burst pattern on B200 |
-| ResNet Training (AMP) | ~85% | **35.8%** | B200 AMP significantly faster |
-| HPC (cuFFT) | ~90% | **61.1%** | Still compute-bound |
-| HPC (N-body) | ~77% | **71.4%** | Memory-bandwidth intensive |
+| Idle | ~0% | ~0% | — |
+| MLP Training | ~6% | TBD | — |
+| Mining Proxy | ~39% | TBD | — |
+| Inference | ~65% | TBD | — |
+| ResNet Training | ~98% | TBD | — |
+| HPC (FFT/N-body) | ~77–90% | TBD | — |
 
-*\*Note: MLP, mining proxy, and rendering workloads completed in < 2 seconds on
-B200 (throughput 1.75M–1.85M img/s for MLP). The 1 Hz telemetry sampler only
-captures idle/cooldown frames. This is a new finding: **B200 speed requires
-higher sampling rates (≥10 Hz) for short-burst workloads**. Prior A100/H100
-workloads took 10–60s per run, making 1 Hz adequate.*
+**Key Finding (Week 3 vs Week 7):** On the A100, memory clock was locked at
+1,215 MHz (non-discriminative). The B200's memory clock behavior under load
+will be analyzed to determine whether it adds discriminative power.
 
-**Key Finding (Week 3 vs Week 7 — Memory Clock):** On the A100, memory clock
-was locked at 1,215 MHz (non-discriminative). The B200 runs at **1,965 MHz**
-under compute load vs **157 MHz** at idle — a **12.5× spread** vs A100's 0×.
-This makes `mem_clock_mhz` a powerful new discriminative feature on B200.
-
-**AMP vs FP32 throughput on B200:**
-- ResNet FP32: **30,405 img/s** (vs Week 3 A100 baseline)
-- ResNet AMP: **31,658 img/s** (1.04× speedup over FP32 — minimal difference)
-- B200's architecture minimizes AMP overhead vs the 45% memory savings seen on A100
-
-**Power Profile (B200 vs A100/H100):**
-- Idle: **141W** (vs ~50W A100) — B200 has higher baseline draw
-- Training: **315–344W** (vs 250–350W H100) — within expected range
-- HPC (cuFFT): **707W** — highest workload, 70.7% of TDP
-- All workloads well below the 1,000W TDP cap
+**AMP vs FP32:** Week 3 showed AMP training uses ~45% less memory than FP32.
+The B200 natively supports FP8 (via Transformer Engine), which may further
+reduce memory footprint and power draw, affecting the telemetry fingerprint.
 
 ---
 
