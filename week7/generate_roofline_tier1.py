@@ -157,22 +157,41 @@ def plot_roofline_single_gpu():
 # ─────────────────────────────────────────────────────────────────────────────
 
 def plot_roofline_two_gpu():
+    # Use model_accuracy_results.csv for proper fwd_flops and AI (same ResNet models)
+    sg = pd.read_csv(WEEK7 / "results" / "model_accuracy" / "model_accuracy_results.csv")
+    if "param_count" in sg.columns and "n_params" not in sg.columns:
+        sg = sg.rename(columns={"param_count": "n_params"})
+    if "n_ch" not in sg.columns:
+        sg["n_ch"] = [8, 16, 32, 64, 128, 256, 512][:len(sg)]
+    sg_by_nch = sg.set_index("n_ch")
+
     wd = pd.read_csv(TG_RESULTS / "model_width_sweep.csv")
     bs = pd.read_csv(TG_RESULTS / "batch_size_sweep.csv")
 
-    batch_size = 64
-    flops = 6 * wd["n_params"] * batch_size
-    mem   = wd["n_params"] * BYTES_PER_FLOAT * 3 + wd["n_params"] * BYTES_PER_FLOAT * batch_size
-    ai_wd = flops / mem
+    # Width sweep: use profiled AI, compute 2-GPU aggregate TFLOPS from real fwd_flops
+    ai_wd, tflops_wd = [], []
+    for _, row in wd.iterrows():
+        nch = int(row["n_ch"])
+        sg_row = sg_by_nch.loc[nch]
+        ai_wd.append(sg_row["ai"])
+        # Aggregate TFLOPS = total fwd_flops (same batch=64 total) / 2-GPU step time
+        tflops_wd.append(sg_row["fwd_flops"] / (row["mean_step_ms"] * 1e-3) / 1e12)
+    ai_wd = np.array(ai_wd)
+    tflops_wd = np.array(tflops_wd)
 
-    # For batch sweep: fixed n_ch=128
-    n_params_fixed = 18010250
-    flops_bs = 6 * n_params_fixed * bs["batch_size"]
-    mem_bs   = n_params_fixed * BYTES_PER_FLOAT * 3 + n_params_fixed * BYTES_PER_FLOAT * bs["batch_size"]
-    ai_bs = flops_bs / mem_bs
+    # Batch sweep: fixed n_ch=128, scale fwd_flops by batch size
+    sg_128 = sg_by_nch.loc[128]
+    fwd_flops_per_sample = sg_128["fwd_flops"] / sg_128["batch_size"]
+    ai_bs, tflops_bs = [], []
+    for _, row in bs.iterrows():
+        bsz = int(row["batch_size"])
+        total_fwd_flops = fwd_flops_per_sample * bsz
+        ai_bs.append(sg_128["ai"])  # AI ≈ constant for same architecture
+        tflops_bs.append(total_fwd_flops / (row["mean_step_ms"] * 1e-3) / 1e12)
+    ai_bs = np.array(ai_bs)
+    tflops_bs = np.array(tflops_bs)
 
     ai_range = np.logspace(-2, 4, 500)
-    # 2-GPU combined: 2× FP16 ceiling, same memory BW (each GPU has its own HBM)
     roof_fp16_2gpu = np.minimum(np.full_like(ai_range, B200_FP16_TFLOPS * 2),
                                 ai_range * (B200_MEM_BW_GBPS / 1e3) * 2)
     roof_fp16_1gpu = np.minimum(np.full_like(ai_range, B200_FP16_TFLOPS),
@@ -187,17 +206,19 @@ def plot_roofline_two_gpu():
     # Width sweep points
     c_wd = plt.cm.Blues(np.linspace(0.4, 0.9, len(wd)))
     for i, row in wd.iterrows():
-        ax.scatter(ai_wd.iloc[i], row["tflops"], s=120, color=c_wd[i], zorder=10,
+        ax.scatter(ai_wd[i], tflops_wd[i], s=120, color=c_wd[i], zorder=10,
                    edgecolors="#1565C0", linewidths=0.8, marker="o")
-        ax.annotate(f"n_ch={int(row['n_ch'])}", (ai_wd.iloc[i], row["tflops"]),
+        ax.annotate(f"n_ch={int(row['n_ch'])}\n({row['n_params']/1e6:.1f}M)",
+                    (ai_wd[i], tflops_wd[i]),
                     fontsize=7, ha="left", xytext=(3, 3), textcoords="offset points")
 
     # Batch sweep points
     c_bs = plt.cm.Oranges(np.linspace(0.4, 0.9, len(bs)))
     for i, row in bs.iterrows():
-        ax.scatter(ai_bs.iloc[i], row["tflops"], s=100, color=c_bs[i], zorder=10,
+        ax.scatter(ai_bs[i], tflops_bs[i], s=100, color=c_bs[i], zorder=10,
                    edgecolors="#E65100", linewidths=0.8, marker="s")
-        ax.annotate(f"bs={int(row['batch_size'])}", (ai_bs.iloc[i], row["tflops"]),
+        ax.annotate(f"bs={int(row['batch_size'])}",
+                    (ai_bs[i], tflops_bs[i]),
                     fontsize=7, ha="right", xytext=(-3, 3), textcoords="offset points")
 
     legend_elements = [
@@ -211,11 +232,21 @@ def plot_roofline_two_gpu():
     ax.set_xlabel("Arithmetic Intensity (FLOP/byte)", fontsize=12)
     ax.set_ylabel("Achieved Performance (TFLOPS)", fontsize=12)
     ax.set_title("Roofline Model — Week 7 2× B200 DataParallel\n"
-                 "(model width sweep ● and batch size sweep ■)",
+                 "(model width sweep and batch size sweep)",
                  fontsize=12, fontweight="bold")
     ax.grid(True, alpha=0.3, which="both")
     ax.set_xlim(1e-2, 1e4)
-    ax.set_ylim(1e-3, B200_FP16_TFLOPS * 4)
+    ax.set_ylim(1e-1, B200_FP16_TFLOPS * 4)
+
+    # Annotation box
+    ax.text(0.98, 0.05,
+            f"B200 HBM3e: {B200_MEM_BW_GBPS:,.0f} GB/s\n"
+            f"2× B200 FP16: {B200_FP16_TFLOPS*2:,.0f} TFLOPS\n"
+            f"Peak achieved: {tflops_wd.max():.1f} TFLOPS ({100*tflops_wd.max()/(B200_FP16_TFLOPS*2):.2f}% of 2-GPU peak)\n"
+            f"DP overhead vs 1-GPU: see comparison plot",
+            transform=ax.transAxes, fontsize=9, va="bottom", ha="right",
+            bbox=dict(boxstyle="round,pad=0.4", fc="lightyellow", ec="gray", alpha=0.8))
+
     plt.tight_layout()
     out = WEEK7 / "two_gpu_tests" / "plots" / "roofline_two_gpu.png"
     plt.savefig(out, dpi=130, bbox_inches="tight")
@@ -228,92 +259,102 @@ def plot_roofline_two_gpu():
 # ─────────────────────────────────────────────────────────────────────────────
 
 def plot_roofline_comparison():
-    # Real B200 data from scale_model_accuracy.py
-    sc_b200 = pd.read_csv(WEEK7 / "results" / "model_accuracy" / "model_accuracy_results.csv")
-    if "param_count" in sc_b200.columns and "n_params" not in sc_b200.columns:
-        sc_b200 = sc_b200.rename(columns={"param_count": "n_params"})
-    if "n_ch" not in sc_b200.columns:
-        sc_b200["n_ch"] = [8, 16, 32, 64, 128, 256, 512][:len(sc_b200)]
+    """B200 single-GPU vs 2-GPU DataParallel roofline comparison."""
+    # Single-GPU data from model_accuracy_results.csv
+    sg = pd.read_csv(WEEK7 / "results" / "model_accuracy" / "model_accuracy_results.csv")
+    if "param_count" in sg.columns and "n_params" not in sg.columns:
+        sg = sg.rename(columns={"param_count": "n_params"})
+    if "n_ch" not in sg.columns:
+        sg["n_ch"] = [8, 16, 32, 64, 128, 256, 512][:len(sg)]
+    sg_by_nch = sg.set_index("n_ch")
 
-    # Week 4 H100 reference data — approximate values from H100 SXM5 at batch=64 AMP
-    h100_data = [
-        {"n_ch": 8,   "n_params": 71570,     "tflops": 0.3,  "ai": 45.4},
-        {"n_ch": 16,  "n_params": 283674,    "tflops": 1.2,  "ai": 89.8},
-        {"n_ch": 32,  "n_params": 1129514,   "tflops": 4.8,  "ai": 174.8},
-        {"n_ch": 64,  "n_params": 4507722,   "tflops": 18.5, "ai": 330.4},
-        {"n_ch": 128, "n_params": 18010250,  "tflops": 72.0, "ai": 594.7},
-        {"n_ch": 256, "n_params": 71999754,  "tflops": 185.0,"ai": 990.3},
-        {"n_ch": 512, "n_params": 287916554, "tflops": 290.0,"ai": 1483.5},
-    ]
-    sc_h100 = pd.DataFrame(h100_data)
+    ai_1gpu = sg["ai"].values
+    tflops_1gpu = sg["achieved_tflops"].values
 
-    ai_b200 = sc_b200["ai"].values
-    ai_h100 = sc_h100["ai"].values
+    # 2-GPU DP data — recompute TFLOPS using profiled fwd_flops
+    wd = pd.read_csv(TG_RESULTS / "model_width_sweep.csv")
+    ai_2gpu, tflops_2gpu = [], []
+    for _, row in wd.iterrows():
+        nch = int(row["n_ch"])
+        sg_row = sg_by_nch.loc[nch]
+        ai_2gpu.append(sg_row["ai"])
+        tflops_2gpu.append(sg_row["fwd_flops"] / (row["mean_step_ms"] * 1e-3) / 1e12)
+    ai_2gpu = np.array(ai_2gpu)
+    tflops_2gpu = np.array(tflops_2gpu)
 
-    ai_range = np.logspace(1, 5, 500)
-    roof_b200 = np.minimum(np.full_like(ai_range, B200_FP16_TFLOPS),
+    ai_range = np.logspace(-2, 4, 500)
+    roof_1gpu = np.minimum(np.full_like(ai_range, B200_FP16_TFLOPS),
                            ai_range * (B200_MEM_BW_GBPS / 1e3))
-    roof_h100 = np.minimum(np.full_like(ai_range, H100_FP16_TFLOPS),
-                           ai_range * (H100_MEM_BW_GBPS / 1e3))
+    roof_2gpu = np.minimum(np.full_like(ai_range, B200_FP16_TFLOPS * 2),
+                           ai_range * (B200_MEM_BW_GBPS / 1e3) * 2)
 
     fig, ax = plt.subplots(figsize=(11, 7))
-    ax.loglog(ai_range, roof_b200, color="#F57F17", lw=2.5,
-              label=f"B200 ceiling ({B200_FP16_TFLOPS:,.0f} TFLOPS, {B200_MEM_BW_GBPS:,} GB/s)")
-    ax.loglog(ai_range, roof_h100, color="#1565C0", lw=2.5,
-              label=f"H100 ceiling ({H100_FP16_TFLOPS:,.0f} TFLOPS, {H100_MEM_BW_GBPS:,} GB/s)")
+    ax.loglog(ai_range, roof_2gpu, color="#1565C0", lw=2.5,
+              label=f"2× B200 FP16 ceiling ({B200_FP16_TFLOPS*2:,.0f} TFLOPS)")
+    ax.loglog(ai_range, roof_1gpu, color="#F57F17", lw=2.5,
+              label=f"1× B200 FP16 ceiling ({B200_FP16_TFLOPS:,.0f} TFLOPS)")
 
-    # B200 measured
-    for i, row in sc_b200.iterrows():
-        ax.scatter(ai_b200[i], row["achieved_tflops"], s=140, color="#F57F17", zorder=10,
+    # 1-GPU measured (diamonds)
+    for i, row in sg.iterrows():
+        ax.scatter(ai_1gpu[i], tflops_1gpu[i], s=140, color="#F57F17", zorder=10,
                    edgecolors="#E65100", linewidths=0.8, marker="D")
-        if row["n_ch"] in [64, 128, 512]:
-            ax.annotate(f"n_ch={int(row['n_ch'])}", (ai_b200[i], row["achieved_tflops"]),
+        if row["n_ch"] in [32, 64, 128, 256, 512]:
+            ax.annotate(f"n_ch={int(row['n_ch'])}",
+                        (ai_1gpu[i], tflops_1gpu[i]),
                         fontsize=7, color="#E65100", ha="left",
                         xytext=(4, 3), textcoords="offset points")
-    # H100 reference
-    for i, row in sc_h100.iterrows():
-        ax.scatter(ai_h100[i], row["tflops"], s=100, color="#1565C0", zorder=10,
-                   edgecolors="#0D47A1", linewidths=0.8, marker="o")
-        if row["n_ch"] in [64, 128, 512]:
-            ax.annotate(f"n_ch={int(row['n_ch'])}", (ai_h100[i], row["tflops"]),
-                        fontsize=7, color="#1565C0", ha="right",
-                        xytext=(-4, 3), textcoords="offset points")
 
-    for i, row in sc_b200.iterrows():
-        if row["n_ch"] in [64, 128, 512]:
-            ax.annotate(f"n_ch={int(row['n_ch'])}", (ai_b200[i], row["achieved_tflops"]),
-                        fontsize=7, color="#E65100", ha="left",
-                        xytext=(4, 3), textcoords="offset points")
+    # 2-GPU DP measured (circles)
+    for i, row in wd.iterrows():
+        ax.scatter(ai_2gpu[i], tflops_2gpu[i], s=120, color="#1565C0", zorder=10,
+                   edgecolors="#0D47A1", linewidths=0.8, marker="o")
+        nch = int(row["n_ch"])
+        if nch in [32, 64, 128, 256, 512]:
+            ax.annotate(f"n_ch={nch}",
+                        (ai_2gpu[i], tflops_2gpu[i]),
+                        fontsize=7, color="#0D47A1", ha="right",
+                        xytext=(-4, -8), textcoords="offset points")
+
+    # Connecting lines between 1-GPU and 2-GPU for same model
+    for i, row in wd.iterrows():
+        nch = int(row["n_ch"])
+        sg_idx = sg[sg["n_ch"] == nch].index[0]
+        ax.plot([ai_1gpu[sg_idx], ai_2gpu[i]],
+                [tflops_1gpu[sg_idx], tflops_2gpu[i]],
+                color="gray", ls=":", lw=0.8, alpha=0.5, zorder=1)
 
     legend_elements = [
-        Line2D([0],[0], color="#F57F17", lw=2.5, label=f"B200 roofline"),
-        Line2D([0],[0], color="#1565C0", lw=2.5, label=f"H100 roofline (W4 ref.)"),
+        Line2D([0],[0], color="#F57F17", lw=2.5, label="1× B200 roofline"),
+        Line2D([0],[0], color="#1565C0", lw=2.5, label="2× B200 roofline"),
         Line2D([0],[0], marker="D", color="w", markerfacecolor="#F57F17",
-               markeredgecolor="#E65100", markersize=9, label="B200 measured (W7)"),
+               markeredgecolor="#E65100", markersize=9, label="1-GPU measured"),
         Line2D([0],[0], marker="o", color="w", markerfacecolor="#1565C0",
-               markeredgecolor="#0D47A1", markersize=9, label="H100 reference (W4)"),
+               markeredgecolor="#0D47A1", markersize=9, label="2-GPU DP measured"),
+        Line2D([0],[0], color="gray", ls=":", lw=0.8, label="DP overhead (same model)"),
     ]
     ax.legend(handles=legend_elements, loc="upper left", fontsize=9)
     ax.set_xlabel("Arithmetic Intensity (FLOP/byte)", fontsize=12)
     ax.set_ylabel("Achieved Performance (TFLOPS)", fontsize=12)
-    ax.set_title("Roofline Comparison: B200 (Week 7) vs H100 (Week 4)\n"
-                 "Model Width Sweep — Single GPU AMP Training",
+    ax.set_title("B200 Roofline: 1-GPU vs 2-GPU DataParallel\n"
+                 "Model Width Sweep — AMP Training (Week 7)",
                  fontsize=12, fontweight="bold")
     ax.grid(True, alpha=0.3, which="both")
     ax.set_xlim(1e-2, 1e4)
-    ax.set_ylim(1e-3, B200_FP16_TFLOPS * 2)
+    ax.set_ylim(1e-1, B200_FP16_TFLOPS * 4)
 
-    # Speedup annotation
-    b200_peak_util = sc_b200["achieved_tflops"].max()
+    # Annotation: DP efficiency
+    peak_1gpu = tflops_1gpu.max()
+    peak_2gpu = tflops_2gpu.max()
     ax.text(0.98, 0.05,
-            f"B200 peak: {b200_peak_util:.1f} TFLOPS ({100*b200_peak_util/B200_FP16_TFLOPS:.2f}% of FP16 peak)\n"
-            f"H100 peak: {sc_h100['tflops'].max():.1f} TFLOPS ({100*sc_h100['tflops'].max()/H100_FP16_TFLOPS:.2f}% of FP16 peak)\n"
-            f"B200/H100 ratio: {b200_peak_util/sc_h100['tflops'].max():.2f}×",
+            f"B200 HBM3e: {B200_MEM_BW_GBPS:,.0f} GB/s\n"
+            f"1-GPU peak: {peak_1gpu:.1f} TFLOPS ({100*peak_1gpu/B200_FP16_TFLOPS:.2f}% of FP16)\n"
+            f"2-GPU DP peak: {peak_2gpu:.1f} TFLOPS ({100*peak_2gpu/(B200_FP16_TFLOPS*2):.2f}% of 2-GPU FP16)\n"
+            f"DP scaling efficiency: {peak_2gpu/peak_1gpu:.2f}× (ideal = 2.0×)",
             transform=ax.transAxes, fontsize=9, va="bottom", ha="right",
             bbox=dict(boxstyle="round,pad=0.4", fc="lightyellow", ec="gray", alpha=0.8))
 
     plt.tight_layout()
-    out = OUT_PLOTS / "roofline_comparison_b200_vs_h100.png"
+    out = OUT_PLOTS / "roofline_comparison_1gpu_vs_2gpu.png"
     plt.savefig(out, dpi=130, bbox_inches="tight")
     plt.close()
     log.info("Saved %s", out.name)
@@ -666,63 +707,49 @@ def plot_nvlink_roofline():
     uni = bw_df[bw_df.get("note", pd.Series(dtype=str)).isna()].copy() if "note" in bw_df.columns else bw_df.copy()
     bidir_row = bw_df[bw_df.get("note", pd.Series(dtype=str)).notna()] if "note" in bw_df.columns else pd.DataFrame()
 
-    # Week 4 H100 reference data
-    h100_bw = [
-        {"size_mb": 1,    "bandwidth_gbps": 8.2},
-        {"size_mb": 4,    "bandwidth_gbps": 28.4},
-        {"size_mb": 16,   "bandwidth_gbps": 72.1},
-        {"size_mb": 64,   "bandwidth_gbps": 107.3},
-        {"size_mb": 256,  "bandwidth_gbps": 121.4},
-        {"size_mb": 512,  "bandwidth_gbps": 123.8},
-        {"size_mb": 1024, "bandwidth_gbps": 124.1},
-        {"size_mb": 2048, "bandwidth_gbps": 124.1},
-        {"size_mb": 4096, "bandwidth_gbps": 124.1},
-    ]
-    h100_df = pd.DataFrame(h100_bw)
-
     fig, axes = plt.subplots(1, 2, figsize=(14, 6))
-    fig.suptitle("NVLink Bandwidth: B200 NVLink 5 (Week 7) vs H100 NV6 (Week 4)",
+    fig.suptitle("B200 NVLink 5 Bandwidth Characterization (Week 7)",
                  fontsize=13, fontweight="bold")
 
-    # Bandwidth curves
+    # Left: bandwidth vs transfer size
     ax = axes[0]
     ax.semilogx(uni["size_mb"], uni["bandwidth_gbps"], marker="o", lw=2.5,
-                color="#F57F17", label=f"B200 NVLink 5 (W7, measured)")
-    ax.semilogx(h100_df["size_mb"], h100_df["bandwidth_gbps"], marker="s", lw=2.5,
-                color="#1565C0", label=f"H100 NV6 (W4, measured)")
+                color="#F57F17", label="B200 NVLink 5 (measured)")
     ax.axhline(B200_NVLINK5_BW, color="#F57F17", ls="--", lw=1.5, alpha=0.7,
-               label=f"B200 theoretical ({B200_NVLINK5_BW} GB/s)")
-    ax.axhline(H100_NVLINK4_BW * 1.21, color="#1565C0", ls="--", lw=1.5, alpha=0.7,
-               label=f"H100 theoretical (150 GB/s per dir)")
+               label=f"Theoretical peak ({B200_NVLINK5_BW} GB/s per dir)")
     if not bidir_row.empty:
         ax.axhline(bidir_row.iloc[0]["bandwidth_gbps"] / 2, color="#E53935", ls=":",
-                   lw=1.5, label=f"B200 bidir/2 ({bidir_row.iloc[0]['bandwidth_gbps']/2:.0f} GB/s)")
+                   lw=1.5, label=f"Bidir/2 ({bidir_row.iloc[0]['bandwidth_gbps']/2:.0f} GB/s)")
     ax.set_xlabel("Transfer size (MB, log scale)")
     ax.set_ylabel("Bandwidth (GB/s)")
     ax.set_title("Unidirectional Bandwidth vs Transfer Size")
     ax.legend(fontsize=8); ax.grid(True, alpha=0.3, which="both")
 
-    # Speedup: B200 / H100
+    # Annotate peak achieved
+    if len(uni) > 0:
+        peak_bw = uni["bandwidth_gbps"].max()
+        peak_size = uni.loc[uni["bandwidth_gbps"].idxmax(), "size_mb"]
+        efficiency = 100 * peak_bw / B200_NVLINK5_BW
+        ax.annotate(f"Peak: {peak_bw:.1f} GB/s\n({efficiency:.1f}% of {B200_NVLINK5_BW} GB/s)\nat {peak_size} MB",
+                    (peak_size, peak_bw), fontsize=8, ha="left",
+                    xytext=(10, -20), textcoords="offset points",
+                    arrowprops=dict(arrowstyle="->", color="gray"),
+                    bbox=dict(boxstyle="round,pad=0.3", fc="lightyellow", ec="gray", alpha=0.8))
+
+    # Right: bandwidth efficiency (% of theoretical peak)
     ax = axes[1]
-    common_sizes = [s for s in uni["size_mb"] if s in h100_df["size_mb"].values]
-    if common_sizes:
-        speedups = []
-        for s in common_sizes:
-            b200_bw = uni[uni["size_mb"] == s]["bandwidth_gbps"].iloc[0]
-            h100_bw_val = h100_df[h100_df["size_mb"] == s]["bandwidth_gbps"].iloc[0]
-            speedups.append(b200_bw / h100_bw_val)
-        ax.semilogx(common_sizes, speedups, marker="^", lw=2.5, color="#2E7D32")
-        ax.axhline(1, color="gray", ls="--", lw=1)
-        ax.axhline(B200_NVLINK5_BW / 150, color="green", ls=":", lw=1.5, alpha=0.5,
-                   label=f"Theoretical: {B200_NVLINK5_BW/150:.1f}×")
-        ax.fill_between(common_sizes, 1, speedups, alpha=0.15, color="#2E7D32")
-        ax.set_xlabel("Transfer size (MB, log scale)")
-        ax.set_ylabel("B200 / H100 bandwidth speedup")
-        ax.set_title("NVLink Speedup: B200 vs H100")
-        ax.legend(fontsize=8); ax.grid(True, alpha=0.3, which="both")
-        for x_val, y_val in zip(common_sizes, speedups):
-            ax.annotate(f"{y_val:.1f}×", (x_val, y_val), fontsize=8,
-                        ha="center", va="bottom", xytext=(0, 4), textcoords="offset points")
+    efficiency_pct = 100 * uni["bandwidth_gbps"] / B200_NVLINK5_BW
+    ax.semilogx(uni["size_mb"], efficiency_pct, marker="^", lw=2.5, color="#2E7D32")
+    ax.axhline(100, color="gray", ls="--", lw=1, label="100% theoretical")
+    ax.fill_between(uni["size_mb"], 0, efficiency_pct, alpha=0.15, color="#2E7D32")
+    ax.set_xlabel("Transfer size (MB, log scale)")
+    ax.set_ylabel("Bandwidth Efficiency (% of theoretical)")
+    ax.set_title("NVLink 5 Bandwidth Efficiency")
+    ax.set_ylim(0, 110)
+    ax.legend(fontsize=8); ax.grid(True, alpha=0.3, which="both")
+    for x_val, y_val in zip(uni["size_mb"], efficiency_pct):
+        ax.annotate(f"{y_val:.0f}%", (x_val, y_val), fontsize=8,
+                    ha="center", va="bottom", xytext=(0, 4), textcoords="offset points")
 
     plt.tight_layout()
     out = WEEK7 / "two_gpu_tests" / "plots" / "nvlink_roofline.png"
@@ -747,7 +774,7 @@ def main():
     log.info("2/9  Roofline — 2-GPU DataParallel B200...")
     plot_roofline_two_gpu()
 
-    log.info("3/9  Roofline Comparison — B200 vs H100...")
+    log.info("3/9  Roofline Comparison — B200 1-GPU vs 2-GPU DP...")
     plot_roofline_comparison()
 
     # Load Tier 1 parquets
@@ -773,20 +800,34 @@ def main():
     log.info("9/9  NVLink Roofline + Speedup...")
     plot_nvlink_roofline()
 
+    # Copy all roofline and tier1 plots to main plots/ directory
+    import shutil
+    main_plots = WEEK7 / "plots"
+    main_plots.mkdir(exist_ok=True)
+    for src_dir in [OUT_PLOTS, WEEK7 / "two_gpu_tests" / "plots"]:
+        for png in src_dir.glob("*.png"):
+            dst = main_plots / png.name
+            shutil.copy2(png, dst)
+            log.info("  Copied %s -> plots/%s", png.name, png.name)
+
+    # Clean up old H100 comparison file if it exists
+    old_comparison = OUT_PLOTS / "roofline_comparison_b200_vs_h100.png"
+    if old_comparison.exists():
+        old_comparison.unlink()
+        log.info("  Removed stale %s", old_comparison.name)
+    old_main = main_plots / "roofline_comparison_b200_vs_h100.png"
+    if old_main.exists():
+        old_main.unlink()
+        log.info("  Removed stale %s from plots/", old_main.name)
+
     log.info("=" * 60)
-    log.info("All figures generated.")
-    log.info("Single GPU plots: %s", OUT_PLOTS)
-    log.info("Two GPU plots:    %s", WEEK7 / 'two_gpu_tests' / 'plots')
+    log.info("All figures generated and copied to plots/")
     log.info("=" * 60)
 
-    # List all generated files
-    all_out = list(OUT_PLOTS.glob("roofline*.png")) + \
-              list(OUT_PLOTS.glob("tier1*.png")) + \
-              list((WEEK7 / "two_gpu_tests" / "plots").glob("roofline*.png")) + \
-              list((WEEK7 / "two_gpu_tests" / "plots").glob("nvlink_roofline*.png"))
-    print("\nGenerated figures:")
-    for p in sorted(all_out):
-        print(f"  {p.relative_to(WEEK7)}")
+    all_out = sorted(main_plots.glob("*.png"))
+    print(f"\nAll plots in {main_plots}:")
+    for p in all_out:
+        print(f"  {p.name}")
 
 
 if __name__ == "__main__":
