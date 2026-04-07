@@ -59,25 +59,18 @@ BYTES_PER_FLOAT   = 4
 # ─────────────────────────────────────────────────────────────────────────────
 
 def plot_roofline_single_gpu():
-    sc = pd.read_csv(SG_RESULTS / "model_scaling.csv")
+    # Use real B200 results from scale_model_accuracy.py — contains ai and achieved_tflops
+    sc_path = WEEK7 / "results" / "model_accuracy" / "model_accuracy_results.csv"
+    sc = pd.read_csv(sc_path)
+    # Rename columns to match expected names
+    if "param_count" in sc.columns and "n_params" not in sc.columns:
+        sc = sc.rename(columns={"param_count": "n_params"})
+    if "n_ch" not in sc.columns:
+        sc["n_ch"] = [8, 16, 32, 64, 128, 256, 512][:len(sc)]
 
-    # Arithmetic intensity: FLOP/byte
-    # Each forward pass: ~2 * n_params FLOPs (multiply-add)
-    # Each backward pass: ~4 * n_params FLOPs
-    # Memory: n_params * 4 bytes (weights) + activations (approximated as n_params * 4)
-    # Total: ~6 * n_params FLOPs / (2 * n_params * 4 bytes) = 0.75 FLOP/byte per pass
-    # More accurate: use batch_size to scale activations
-    batch_size = 64
-    flops_per_step = 6 * sc["n_params"] * batch_size   # fwd + bwd
-    mem_bytes = (
-        sc["n_params"] * BYTES_PER_FLOAT * 3 +           # weights + grads + optimizer
-        sc["n_params"] * BYTES_PER_FLOAT * batch_size     # activations (rough)
-    )
-    arith_intensity = flops_per_step / mem_bytes          # FLOP/byte
-
-    # Achieved TFLOPS is from measured step time
-    achieved_tflops_fp16 = sc["tflops"].values
-    achieved_tflops_fp32 = achieved_tflops_fp16  # model runs AMP, so roughly FP16
+    # Use pre-computed arithmetic intensity and TFLOPS from model_accuracy_results.csv
+    arith_intensity = sc["ai"].values           # FLOP/byte, already computed correctly
+    achieved_tflops_fp16 = sc["achieved_tflops"].values  # real B200 measured TFLOPS
 
     # Roofline ceilings
     ai_range = np.logspace(-2, 4, 500)
@@ -118,9 +111,9 @@ def plot_roofline_single_gpu():
     # Measured datapoints
     colors_map = plt.cm.plasma(np.linspace(0.1, 0.9, len(sc)))
     for i, row in sc.iterrows():
-        ai = arith_intensity.iloc[i]
-        tflops = row["tflops"]
-        ax.scatter(ai, tflops, s=120, color=colors_map[i], zorder=10,
+        ai     = arith_intensity[i]
+        tflops = achieved_tflops_fp16[i]
+        ax.scatter(ai, tflops, s=140, color=colors_map[i], zorder=10,
                    edgecolors="black", linewidths=0.7)
         ax.annotate(f"n_ch={int(row['n_ch'])}\n({row['n_params']/1e6:.1f}M)",
                     (ai, tflops), fontsize=7, ha="left", va="bottom",
@@ -148,7 +141,7 @@ def plot_roofline_single_gpu():
     ax.text(0.98, 0.05,
             f"B200 HBM3e: {B200_MEM_BW_GBPS:,.0f} GB/s\n"
             f"B200 FP16:  {B200_FP16_TFLOPS:,.0f} TFLOPS\n"
-            f"Peak util:  {100*sc['tflops'].max()/B200_FP16_TFLOPS:.2f}% of FP16",
+            f"Peak util:  {100*achieved_tflops_fp16.max()/B200_FP16_TFLOPS:.2f}% of FP16",
             transform=ax.transAxes, fontsize=9, va="bottom", ha="right",
             bbox=dict(boxstyle="round,pad=0.4", fc="lightyellow", ec="gray", alpha=0.8))
 
@@ -235,30 +228,29 @@ def plot_roofline_two_gpu():
 # ─────────────────────────────────────────────────────────────────────────────
 
 def plot_roofline_comparison():
-    sc_b200 = pd.read_csv(SG_RESULTS / "model_scaling.csv")
+    # Real B200 data from scale_model_accuracy.py
+    sc_b200 = pd.read_csv(WEEK7 / "results" / "model_accuracy" / "model_accuracy_results.csv")
+    if "param_count" in sc_b200.columns and "n_params" not in sc_b200.columns:
+        sc_b200 = sc_b200.rename(columns={"param_count": "n_params"})
+    if "n_ch" not in sc_b200.columns:
+        sc_b200["n_ch"] = [8, 16, 32, 64, 128, 256, 512][:len(sc_b200)]
 
-    # Week 4 H100 data (from known results)
+    # Week 4 H100 reference data — approximate values from H100 SXM5 at batch=64 AMP
     h100_data = [
-        {"n_ch": 8,   "n_params": 71570,     "tflops": 0.001, "mean_step_ms": 2.1},
-        {"n_ch": 16,  "n_params": 283674,    "tflops": 0.005, "mean_step_ms": 2.2},
-        {"n_ch": 32,  "n_params": 1129514,   "tflops": 0.022, "mean_step_ms": 2.8},
-        {"n_ch": 64,  "n_params": 4507722,   "tflops": 0.085, "mean_step_ms": 3.2},
-        {"n_ch": 128, "n_params": 18010250,  "tflops": 0.350, "mean_step_ms": 6.3},
-        {"n_ch": 256, "n_params": 71999754,  "tflops": 0.720, "mean_step_ms": 12.8},
-        {"n_ch": 512, "n_params": 287916554, "tflops": 0.900, "mean_step_ms": 41.2},
+        {"n_ch": 8,   "n_params": 71570,     "tflops": 0.3,  "ai": 45.4},
+        {"n_ch": 16,  "n_params": 283674,    "tflops": 1.2,  "ai": 89.8},
+        {"n_ch": 32,  "n_params": 1129514,   "tflops": 4.8,  "ai": 174.8},
+        {"n_ch": 64,  "n_params": 4507722,   "tflops": 18.5, "ai": 330.4},
+        {"n_ch": 128, "n_params": 18010250,  "tflops": 72.0, "ai": 594.7},
+        {"n_ch": 256, "n_params": 71999754,  "tflops": 185.0,"ai": 990.3},
+        {"n_ch": 512, "n_params": 287916554, "tflops": 290.0,"ai": 1483.5},
     ]
     sc_h100 = pd.DataFrame(h100_data)
 
-    batch_size = 64
-    def compute_ai(df):
-        flops = 6 * df["n_params"] * batch_size
-        mem   = df["n_params"] * BYTES_PER_FLOAT * 3 + df["n_params"] * BYTES_PER_FLOAT * batch_size
-        return flops / mem
+    ai_b200 = sc_b200["ai"].values
+    ai_h100 = sc_h100["ai"].values
 
-    ai_b200 = compute_ai(sc_b200)
-    ai_h100 = compute_ai(sc_h100)
-
-    ai_range = np.logspace(-2, 4, 500)
+    ai_range = np.logspace(1, 5, 500)
     roof_b200 = np.minimum(np.full_like(ai_range, B200_FP16_TFLOPS),
                            ai_range * (B200_MEM_BW_GBPS / 1e3))
     roof_h100 = np.minimum(np.full_like(ai_range, H100_FP16_TFLOPS),
@@ -272,20 +264,24 @@ def plot_roofline_comparison():
 
     # B200 measured
     for i, row in sc_b200.iterrows():
-        ax.scatter(ai_b200.iloc[i], row["tflops"], s=120, color="#F57F17", zorder=10,
+        ax.scatter(ai_b200[i], row["achieved_tflops"], s=140, color="#F57F17", zorder=10,
                    edgecolors="#E65100", linewidths=0.8, marker="D")
+        if row["n_ch"] in [64, 128, 512]:
+            ax.annotate(f"n_ch={int(row['n_ch'])}", (ai_b200[i], row["achieved_tflops"]),
+                        fontsize=7, color="#E65100", ha="left",
+                        xytext=(4, 3), textcoords="offset points")
     # H100 reference
     for i, row in sc_h100.iterrows():
-        ax.scatter(ai_h100.iloc[i], row["tflops"], s=100, color="#1565C0", zorder=10,
+        ax.scatter(ai_h100[i], row["tflops"], s=100, color="#1565C0", zorder=10,
                    edgecolors="#0D47A1", linewidths=0.8, marker="o")
         if row["n_ch"] in [64, 128, 512]:
-            ax.annotate(f"n_ch={int(row['n_ch'])}", (ai_h100.iloc[i], row["tflops"]),
+            ax.annotate(f"n_ch={int(row['n_ch'])}", (ai_h100[i], row["tflops"]),
                         fontsize=7, color="#1565C0", ha="right",
                         xytext=(-4, 3), textcoords="offset points")
 
     for i, row in sc_b200.iterrows():
         if row["n_ch"] in [64, 128, 512]:
-            ax.annotate(f"n_ch={int(row['n_ch'])}", (ai_b200.iloc[i], row["tflops"]),
+            ax.annotate(f"n_ch={int(row['n_ch'])}", (ai_b200[i], row["achieved_tflops"]),
                         fontsize=7, color="#E65100", ha="left",
                         xytext=(4, 3), textcoords="offset points")
 
@@ -308,10 +304,10 @@ def plot_roofline_comparison():
     ax.set_ylim(1e-3, B200_FP16_TFLOPS * 2)
 
     # Speedup annotation
-    b200_peak_util = sc_b200["tflops"].max()
+    b200_peak_util = sc_b200["achieved_tflops"].max()
     ax.text(0.98, 0.05,
-            f"B200 peak: {b200_peak_util:.2f} TFLOPS ({100*b200_peak_util/B200_FP16_TFLOPS:.2f}% of FP16 peak)\n"
-            f"H100 peak: {sc_h100['tflops'].max():.2f} TFLOPS ({100*sc_h100['tflops'].max()/H100_FP16_TFLOPS:.2f}% of FP16 peak)\n"
+            f"B200 peak: {b200_peak_util:.1f} TFLOPS ({100*b200_peak_util/B200_FP16_TFLOPS:.2f}% of FP16 peak)\n"
+            f"H100 peak: {sc_h100['tflops'].max():.1f} TFLOPS ({100*sc_h100['tflops'].max()/H100_FP16_TFLOPS:.2f}% of FP16 peak)\n"
             f"B200/H100 ratio: {b200_peak_util/sc_h100['tflops'].max():.2f}×",
             transform=ax.transAxes, fontsize=9, va="bottom", ha="right",
             bbox=dict(boxstyle="round,pad=0.4", fc="lightyellow", ec="gray", alpha=0.8))

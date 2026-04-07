@@ -120,10 +120,13 @@
     "power_per_util",
     "pcie_total_mean",
     "util_per_sm_pct",
+    "power_pct_tdp",
     "acf1_gpu_util",
-    "acf1_power"
+    "acf1_power",
+    "mem_clock_dynamic_range",
+    "sm_clock_dynamic_range"
   ],
-  "n_features": 122,
+  "n_features": 125,
   "signals": [
     "gpu_utilization_pct",
     "mem_utilization_pct",
@@ -154,7 +157,16 @@
     "power_per_util",
     "pcie_total_mean",
     "util_per_sm_pct",
+    "power_pct_tdp",
     "acf1_gpu_util",
-    "acf1_power"
-  ]
+    "acf1_power",
+    "mem_clock_dynamic_range",
+    "sm_clock_dynamic_range"
+  ],
+  "window_sizes": [
+    5,
+    15,
+    30
+  ],
+  "note": "power_pct_tdp enables cross-GPU comparison (B200 TDP=1000W, H100=700W). Raw watts are GPU-specific; normalized power is transferable."
 }

@@ -293,7 +293,7 @@ def workload_resnet_amp(epochs=3, batch_size=512):
             "elapsed_s": elapsed, "total_imgs": total_imgs}
 
 
-def workload_mlp(epochs=3, batch_size=1024):
+def workload_mlp(epochs=30, batch_size=1024):
     """W4: 3-layer MLP training."""
     log.info("W4: MLP training (epochs=%d, bs=%d)...", epochs, batch_size)
     dev = torch.device(DEVICE)
@@ -374,7 +374,7 @@ def workload_nbody(n_particles=32768, n_steps=300):
             "n_particles": n_particles, "n_steps": n_steps}
 
 
-def workload_mining_proxy(n_iters=2000):
+def workload_mining_proxy(n_iters=20000):
     """W8: Crypto mining proxy — repetitive hash-like SHA256 computation."""
     log.info("W8: Mining proxy (iters=%d)...", n_iters)
     dev = torch.device(DEVICE)
@@ -392,7 +392,7 @@ def workload_mining_proxy(n_iters=2000):
     return {"workload": "mining_proxy", "elapsed_s": elapsed, "n_iters": n_iters}
 
 
-def workload_rendering(n_samples=500000, n_iters=100):
+def workload_rendering(n_samples=500000, n_iters=2000):
     """W9: Monte Carlo path tracing proxy — random ray sampling."""
     log.info("W9: Rendering proxy (samples=%d, iters=%d)...", n_samples, n_iters)
     dev = torch.device(DEVICE)

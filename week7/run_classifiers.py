@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Week 4 Step 3: Baseline Classifier Suite
+Week 7 Step 3: Baseline Classifier Suite
 - Feature extraction: statistical, FFT, memory growth
 - Train: Random Forest, SVM, Logistic Regression (+ XGBoost if available)
 - Evaluate: binary (ML training vs rest), 3-way (training/inference/other),
@@ -8,7 +8,7 @@ Week 4 Step 3: Baseline Classifier Suite
 - Sliding window evaluation at 30s, 60s, 120s
 - Save all metrics and confusion matrices
 
-Outputs to week4/results/
+Outputs to week7/results/
 """
 
 import sys
@@ -377,7 +377,7 @@ def run_sliding_window_eval(df, window_secs_list, clfs):
 
 def main():
     print("=" * 60)
-    print("Week 4 Classifier Suite")
+    print("Week 7 Classifier Suite")
     print("=" * 60)
 
     print("\n[1/5] Loading data...")

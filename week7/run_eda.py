@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """
-Week 4 Step 2: Exploratory Data Analysis
-- Load all parquet files (existing week3 data + new week4 edge-case data)
+Week 7 Step 2: Exploratory Data Analysis
+- Load all parquet files (existing week7 B200 edge-case data)
 - Time-series visualizations per workload category
 - Summary statistics and autocorrelation
 - PCA and t-SNE projections of aggregate features
 - Correlation matrices
 
-Outputs plots to week4/plots/, stats to week4/results/eda_stats.csv
+Outputs plots to week7/plots/, stats to week4/results/eda_stats.csv
 """
 
 import sys
@@ -59,7 +59,7 @@ WORKLOAD_COLORS = {
     "nbody_sim": "#795548",
     "mining_ethash_proxy": "#FF5722",
     "rendering_proxy": "#607D8B",
-    # Week 4 edge cases
+    # Edge cases
     "resnet18_small_batch": "#42A5F5",
     "resnet18_large_batch": "#1E88E5",
     "resnet18_short_run": "#0D47A1",
@@ -87,7 +87,7 @@ CATEGORY_MAP = {
     "nbody_sim": "scientific_hpc",
     "mining_ethash_proxy": "crypto_mining",
     "rendering_proxy": "rendering",
-    # Week 4 edge cases
+    # Edge cases
     "resnet18_small_batch": "ml_training",
     "resnet18_large_batch": "ml_training",
     "resnet18_short_run": "ml_training",
@@ -415,7 +415,7 @@ def compute_summary_stats(df):
 
 def main():
     print("=" * 60)
-    print("Week 4 EDA")
+    print("Week 7 EDA")
     print("=" * 60)
 
     print("\n[1/7] Loading parquet files...")

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-DDP (DistributedDataParallel) Training Characterization — 2x H100 via NVLink
+DDP (DistributedDataParallel) Training Characterization — 2x B200 via NVLink 5
 
 Runs data-parallel training where:
   - Each GPU processes a DIFFERENT shard of data each step (true DDP)
@@ -11,11 +11,11 @@ Runs data-parallel training where:
   - Bottleneck analysis: compute vs. memory vs. communication
 
 This script is launched via `torchrun --nproc_per_node=2`:
-    torchrun --nproc_per_node=2 week4/ddp_training_characterize.py
+    torchrun --nproc_per_node=2 week7/ddp_training_characterize.py
 
 Or via subprocess from the characterize wrapper (see below).
 
-Results saved to: week4/results/ddp/
+Results saved to: week7/results/ddp/
 """
 
 import os
@@ -42,7 +42,7 @@ RESULTS_DIR = REPO_ROOT / "week7" / "results" / "ddp"
 RESULTS_DIR.mkdir(parents=True, exist_ok=True)
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
-log = logging.getLogger("week4.ddp")
+log = logging.getLogger("week7.ddp")
 
 
 # ── Model (same as workloads_w4.py) ─────────────────────────────────────────
@@ -265,7 +265,7 @@ def run_with_telemetry():
     import pandas as pd
 
     log.info("=" * 60)
-    log.info("DDP Training Characterization — 2× H100 via NVLink")
+    log.info("DDP Training Characterization — 2× B200 via NVLink 5")
     log.info("=" * 60)
 
     # Start telemetry collectors for both GPUs
@@ -344,7 +344,7 @@ def make_analysis_plots(dfs, stats_list, total_elapsed):
 
     # ── Plot 1: GPU utilisation + power over time (both GPUs) ────────────────
     fig, axes = plt.subplots(3, 1, figsize=(14, 10), sharex=True)
-    fig.suptitle("DDP Training Telemetry — 2× H100 via NVLink", fontsize=13, fontweight="bold")
+    fig.suptitle("DDP Training Telemetry — 2× B200 via NVLink 5", fontsize=13, fontweight="bold")
     colors = ["#1565C0", "#E53935"]
     labels = ["GPU 0", "GPU 1"]
     metrics = [("gpu_utilization_pct", "GPU Utilisation (%)"),
@@ -431,9 +431,9 @@ def make_roofline_plot(stats_list, plots_dir):
     import matplotlib.patches as mpatches
 
     # H100 hardware specs
-    H100_PEAK_TFLOPS_FP16  = 1979.0   # TFLOPS (tensor core fp16)
-    H100_PEAK_TFLOPS_FP32  = 67.0     # TFLOPS (standard fp32)
-    H100_HBM3_BW_GBPS      = 3350.0   # GB/s HBM3 bandwidth
+    B200_PEAK_TFLOPS_FP16  = 4500.0   # TFLOPS (tensor core fp16)
+    B200_PEAK_TFLOPS_FP32  = 140.0     # TFLOPS (standard fp32)
+    B200_HBM3E_BW_GBPS     = 8000.0   # GB/s HBM3e bandwidth (B200)
     NVLINK_BW_UNIDIRECTIONAL = 124.10  # GB/s (measured)
     NVLINK_BW_BIDIR          = 246.36  # GB/s (measured)
 
@@ -477,20 +477,20 @@ def make_roofline_plot(stats_list, plots_dir):
     ai_range = np.logspace(-3, 3, 1000)
 
     # Roofline ceilings
-    compute_roof_fp16 = H100_PEAK_TFLOPS_FP16 * np.ones_like(ai_range)
-    compute_roof_fp32 = H100_PEAK_TFLOPS_FP32 * np.ones_like(ai_range)
-    memory_roof = H100_HBM3_BW_GBPS * ai_range / 1000  # convert to TFLOPS
+    compute_roof_fp16 = B200_PEAK_TFLOPS_FP16 * np.ones_like(ai_range)
+    compute_roof_fp32 = B200_PEAK_TFLOPS_FP32 * np.ones_like(ai_range)
+    memory_roof = B200_HBM3E_BW_GBPS * ai_range / 1000  # convert to TFLOPS
     nvlink_roof = NVLINK_BW_UNIDIRECTIONAL * ai_range / 1000
 
     # Plot ceilings
     ax.loglog(ai_range,
               np.minimum(compute_roof_fp16, memory_roof),
-              "b-", linewidth=2, label=f"H100 FP16 Roof ({H100_PEAK_TFLOPS_FP16:.0f} TFLOPS)")
+              "b-", linewidth=2, label=f"B200 FP16 Roof ({B200_PEAK_TFLOPS_FP16:.0f} TFLOPS)")
     ax.loglog(ai_range,
               np.minimum(compute_roof_fp32, memory_roof),
-              "b--", linewidth=1.5, label=f"H100 FP32 Roof ({H100_PEAK_TFLOPS_FP32:.0f} TFLOPS)")
+              "b--", linewidth=1.5, label=f"B200 FP32 Roof ({B200_PEAK_TFLOPS_FP32:.0f} TFLOPS)")
     ax.loglog(ai_range,
-              np.minimum(H100_PEAK_TFLOPS_FP16 * np.ones_like(ai_range), nvlink_roof),
+              np.minimum(B200_PEAK_TFLOPS_FP16 * np.ones_like(ai_range), nvlink_roof),
               "r--", linewidth=1.5, alpha=0.7,
               label=f"NVLink Roof ({NVLINK_BW_UNIDIRECTIONAL:.0f} GB/s)")
 
@@ -509,7 +509,7 @@ def make_roofline_plot(stats_list, plots_dir):
     ax.legend(fontsize=9, loc="lower right")
     ax.grid(True, alpha=0.3, which="both")
     ax.set_xlim([1e-2, 1e3])
-    ax.set_ylim([0.01, H100_PEAK_TFLOPS_FP16 * 5])
+    ax.set_ylim([0.01, B200_PEAK_TFLOPS_FP16 * 5])
 
     # Annotations
     ax.annotate("Memory-bound\nregion", xy=(0.1, 10), fontsize=9,
@@ -543,7 +543,7 @@ def make_roofline_plot(stats_list, plots_dir):
         "achieved_tflops": [achieved_tflops_fwd,
                             achieved_nvlink_bw / 1000 * ai_backward],
         "time_ms": [fwd_ms, bwd_ms],
-        "bottleneck": ["compute" if achieved_tflops_fwd > H100_PEAK_TFLOPS_FP16 * 0.5
+        "bottleneck": ["compute" if achieved_tflops_fwd > B200_PEAK_TFLOPS_FP16 * 0.5
                        else "memory",
                        "communication (NVLink)"],
     })
