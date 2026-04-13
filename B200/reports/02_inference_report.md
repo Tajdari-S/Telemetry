@@ -57,6 +57,63 @@ _Power efficiency across all sweeps_
 ![graph](../graphs/inference/roofline_inference.png)
 _LLM inference is memory-bandwidth bound at BS=1 (AI ≈ batch_size for decode)_
 
+### How Roofline Points Are Calculated
+
+Each point on the roofline represents the **best-case configuration** (highest throughput across
+all input/output length sweeps) for each dtype at BS=32.
+
+**Arithmetic Intensity (X-axis):**
+
+LLM decode loads all model weights from HBM once per step, processing `batch_size` tokens:
+```
+FLOP per step  = 2 × N_params × batch_size        (one matmul per token, weight reuse across batch)
+Bytes accessed = N_params × bytes_per_param        (full weight load, once per step)
+
+AI = FLOP / bytes = 2 × batch_size / bytes_per_param
+```
+
+| Dtype | bytes/param | BS=32 AI (FLOP/byte) |
+|-------|------------|----------------------|
+| FP8   | 1          | 2 × 32 / 1 = **64**  |
+| INT8  | 1          | 2 × 32 / 1 = **64**  |
+| INT12 | 2 (BF16 at runtime) | 2 × 32 / 2 = **32** |
+| BF16  | 2          | 2 × 32 / 2 = **32**  |
+
+Note: N_params cancels in the AI ratio — the arithmetic intensity depends only on batch size
+and bytes per parameter, not on the absolute model size.
+
+**Achieved TFLOPS (Y-axis):**
+```
+achieved_TFLOPS = max_throughput_tps × 2 × N_params / 1e12
+```
+Using N_params = 8.0B (Qwen2.5-7B rounded; ~5% overestimate).
+
+**The two roof lines:**
+- **Solid blue line** — theoretical peak: `min(AI × 8.0 TB/s, peak_dtype_TFLOPS)`. This is the
+  hard ceiling imposed by B200 hardware. All measured points must be below this line.
+- **Dashed green line** — measured average BW reference: `min(AI × 3.27 TB/s, peak)`.
+  This is the mean HBM bandwidth utilization across **all** sweep configurations (3.27 TB/s =
+  40.9% of 8.0 TB/s), including small-batch runs where utilization is low.
+
+### Why INT12 Appears Above the Green (Measured) Reference Line
+
+INT12 at BS=32 achieves **138.1 TFLOPS** while the measured-BW reference at AI=32 is
+**104.7 TFLOPS** (32 × 3.27 TB/s). This is not a bug — it is expected:
+
+- The **green line** represents the *average* BW utilization across all 72 configurations
+  (BS=1 through BS=32, all input lengths). Low-batch runs (BS=1,2) achieve only 2–5% BW
+  utilization due to kernel launch overhead, dragging the average down.
+- The **point** plotted is the *best* configuration (BS=32), which achieves **65.1% BW
+  utilization** (5.21 TB/s) — far above the 40.9% average.
+- At 5.21 TB/s, the BW roof at AI=32 is 32 × 5.21 = **166.7 TFLOPS**, and INT12 achieves
+  138.1 TFLOPS — correctly below that.
+- The **solid blue theoretical roof** at AI=32 is 32 × 8.0 = **256 TFLOPS**. INT12 at 138.1
+  is 54% of theoretical — physically valid.
+
+In short: the green line is a *population average*, not a ceiling. Plotting the peak throughput
+point against an average naturally places high-performing configurations above the average line.
+The only physically meaningful constraint is the blue theoretical roof.
+
 ## Key Findings
 - BS=1 decode is **memory-bound** (arithmetic intensity = 1 FLOP/byte, ridge at ~560).
 - Throughput scales nearly linearly with batch size up to memory capacity.

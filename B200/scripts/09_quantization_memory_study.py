@@ -190,16 +190,28 @@ def main():
                                 ms=ms, tflops=tflops, ai=ai,
                                 mem_bytes=mem, mem_bw_util=mem_bw_util, mfu=mfu))
 
-    # Dequant-only across sizes
-    print(f"\n── Dequant-only kernel (INT8→BF16, no matmul) ──")
+    # Dequant-only: sweep weight matrix sizes (M is irrelevant — dequant only touches N×K weights)
+    # Use sizes from ~10 MB up to ~4 GB to show how BW utilization rises with tensor size
+    print(f"\n── Dequant-only kernel (INT8→BF16, no matmul) — sweep weight sizes ──")
+    DQ_SHAPES = [
+        (256,   512),    #   ~0.1 MB — kernel-overhead dominated
+        (1024,  1024),   #   ~1 MB
+        (2048,  4096),   #   ~8 MB
+        (4096,  14336),  #  ~58 MB  — actual LLM FFN weight
+        (8192,  14336),  # ~117 MB
+        (8192,  28672),  # ~235 MB  — 70B LLM FFN
+        (16384, 28672),  # ~470 MB
+    ]
     dq_results = []
-    for M, N, K in SHAPES:
-        ms, tflops, ai, mem = run_dequant_only(M, N, K)
+    for dq_N, dq_K in DQ_SHAPES:
+        ms, tflops, ai, mem = run_dequant_only(1, dq_N, dq_K)
         bw_util = (mem / (ms * 1e-3)) / (MEM_BW_TBps * 1e12) * 100
-        print(f"  N={N} K={K}  {ms:.3f} ms  AI={ai:.3f}  BW_util={bw_util:.1f}%  "
-              f"{'MEMORY-BOUND' if ai < 281 else 'COMPUTE-BOUND'}")
-        dq_results.append(dict(M=M, N=N, K=K, ms=ms, tflops=tflops,
-                                ai=ai, mem_bw_util=bw_util))
+        size_MB = dq_N * dq_K / 1e6
+        print(f"  {dq_N}×{dq_K} ({size_MB:.0f} MB)  {ms:.3f} ms  "
+              f"AI={ai:.3f}  BW_util={bw_util:.1f}%  "
+              f"{'memory-bound' if ai < 281 else 'compute-bound'}")
+        dq_results.append(dict(weight_MB=size_MB, N=dq_N, K=dq_K,
+                               ms=ms, tflops=tflops, ai=ai, mem_bw_util=bw_util))
 
     df = pd.DataFrame(results)
     df_dq = pd.DataFrame(dq_results)
@@ -233,13 +245,13 @@ def main():
     save_fig(fig, f"{GOUT}/latency_vs_batch.png")
 
     # ── Plot 2: Roofline ──────────────────────────────────────────────────────
-    # Pick the highest-M (most compute-bound) row for each path to show ceiling
+    # Pick the highest-M (most compute-bound) row for each matmul path
     roofline_pts = {}
     for path, grp in df.groupby("path"):
         best = grp.loc[grp["M"].idxmax()]
         roofline_pts[path] = (best["ai"], best["tflops"])
-    # Add dequant-only
-    dq_best = df_dq.loc[df_dq["M"].idxmax()]
+    # Dequant-only: use largest weight size for best BW efficiency
+    dq_best = df_dq.loc[df_dq["weight_MB"].idxmax()]
     roofline_pts["dequant_only"] = (dq_best["ai"], dq_best["tflops"])
     plot_roofline(roofline_pts, dtype="bf16",
                   out_path=f"{GOUT}/roofline_quant_paths.png")
@@ -261,15 +273,31 @@ def main():
     plt.tight_layout()
     save_fig(fig, f"{GOUT}/dequant_overhead_bar.png")
 
-    # ── Plot 4: Dequant-only bandwidth utilization ────────────────────────────
-    fig, ax = plt.subplots(figsize=(8, 4))
-    ax.bar([f"M={r['M']}" for _, r in df_dq.iterrows()],
-           df_dq["mem_bw_util"], color="#9C27B0", alpha=0.8)
-    ax.axhline(100, color="red", lw=1.5, ls="--", label="100% HBM BW")
-    ax.set_ylabel("HBM BW Utilization (%)")
-    ax.set_title(f"Dequantization Kernel (INT8→BF16): AI = {df_dq['ai'].iloc[0]:.2f} FLOP/byte\n"
-                 "Deeply memory-bound — saturates ~100% of HBM bandwidth")
-    ax.legend(); ax.grid(axis="y", alpha=0.3)
+    # ── Plot 4: Dequant-only BW utilization vs weight matrix size ───────────────
+    # Shows: small tensors are overhead-dominated; large tensors approach HBM peak
+    fig, axes = plt.subplots(1, 2, figsize=(13, 4))
+    labels = [f"{r['N']}×{r['K']}\n({r['weight_MB']:.0f} MB)" for _, r in df_dq.iterrows()]
+
+    axes[0].bar(range(len(df_dq)), df_dq["mem_bw_util"], color="#9C27B0", alpha=0.8)
+    axes[0].axhline(100, color="red", lw=1.5, ls="--", label="100% HBM BW ceiling")
+    axes[0].set_xticks(range(len(df_dq))); axes[0].set_xticklabels(labels, fontsize=7)
+    axes[0].set_ylabel("HBM BW Utilization (%)")
+    axes[0].set_title(f"Dequant Kernel (INT8→BF16): AI = {df_dq['ai'].iloc[0]:.2f} FLOP/byte\n"
+                      "BW utilization rises with tensor size (overhead amortised)")
+    axes[0].legend(); axes[0].grid(axis="y", alpha=0.3)
+    axes[0].set_ylim(0, 110)
+
+    # Latency breakdown: actual time vs ideal time at peak BW
+    ideal_ms = df_dq["weight_MB"] * 3 / 1e3 / MEM_BW_TBps * 1e3   # (N*K*3 bytes) / BW
+    axes[1].plot(df_dq["weight_MB"], df_dq["ms"], "o-", lw=2, color="#9C27B0", label="Actual latency")
+    axes[1].plot(df_dq["weight_MB"], ideal_ms,    "s--", lw=2, color="green",   label="Ideal (peak HBM BW)")
+    axes[1].set_xlabel("Weight Matrix Size (MB)")
+    axes[1].set_ylabel("Latency (ms)")
+    axes[1].set_title("Actual vs Ideal Dequant Latency\n"
+                      "Gap = kernel launch + memory transaction overhead")
+    axes[1].set_xscale("log"); axes[1].set_yscale("log")
+    axes[1].legend(); axes[1].grid(alpha=0.3)
+
     plt.tight_layout()
     save_fig(fig, f"{GOUT}/dequant_bw_util.png")
 

@@ -192,6 +192,138 @@ with small batch) show degraded perf/watt and should not be run in DataParallel 
 
 ---
 
+---
+
+## Finding 4 — Roofline Methodology and Why a Point Can Be Above the Measured BW Line
+
+### Question
+How are the roofline points calculated, and why does INT12 appear above the measured bandwidth reference line?
+
+### How Arithmetic Intensity Is Calculated (Inference Decode)
+
+During the decode phase of LLM inference, each step loads all model weights from HBM once,
+processes `batch_size` tokens, and produces one output token per sequence:
+
+```
+FLOP per step  = 2 × N_params × batch_size
+                 ↑ factor 2: multiply-accumulate in each linear layer
+
+Bytes accessed = N_params × bytes_per_param
+                 ↑ weight load dominates; activations (M×K) are negligible vs weights (N×K) at small batch
+
+Arithmetic Intensity = FLOP / bytes = 2 × batch_size / bytes_per_param
+```
+
+N_params cancels in the ratio — AI depends only on batch size and bytes per parameter,
+not on the absolute model size.
+
+| Dtype | bytes/param at runtime | BS=32 AI (FLOP/byte) |
+|-------|------------------------|----------------------|
+| FP8   | 1                      | 2 × 32 / 1 = **64**  |
+| INT8 (bitsandbytes) | 1 (stored) → 2 (after dequant) | 2 × 32 / 1 = **64** |
+| INT12 | 2 (BF16 at runtime)    | 2 × 32 / 2 = **32**  |
+| BF16  | 2                      | 2 × 32 / 2 = **32**  |
+
+### How Achieved TFLOPS Is Calculated
+
+```
+achieved_TFLOPS = throughput_tps × 2 × N_params / 1e12
+```
+
+The `throughput_tps` is the peak measured output tokens per second across all input/output
+length combinations at the given batch size. N_params = 8.0B (Qwen2.5-7B, ~5% overestimate).
+
+### The Two Roof Lines
+
+| Line | Formula | What it represents |
+|------|---------|-------------------|
+| Solid blue (theoretical) | `min(AI × 8.0 TB/s, peak_TFLOPS)` | Hard hardware ceiling — no measurement can exceed this |
+| Dashed green (measured avg) | `min(AI × 3.27 TB/s, peak_TFLOPS)` | Mean HBM BW utilization across ALL 72 sweep configs (40.9% × 8.0 TB/s) |
+
+### Why INT12 Appears Above the Green Reference Line
+
+INT12 at BS=32 achieves **138.1 TFLOPS** while the measured-BW reference at AI=32 gives
+**32 × 3.27 = 104.7 TFLOPS**. This is expected behavior, not a bug:
+
+- The **green line** is a *population average* over all 72 configurations. Small-batch runs
+  (BS=1,2) achieve only 2–5% BW utilization due to kernel overhead, pulling the mean down to 40.9%.
+- The **plotted point** is the *best case* (BS=32), which achieves **65.1% BW utilization**
+  (5.21 TB/s) — well above the average.
+- At 5.21 TB/s, the BW roof at AI=32 is 32 × 5.21 = **166.7 TFLOPS**. INT12 at 138.1 is below it.
+- The **theoretical roof** at AI=32 is 32 × 8.0 = **256 TFLOPS**. INT12 at 138.1 is 54% of that.
+
+Plotting the peak-throughput point against a population-average reference line will naturally
+place high-performing configurations above the reference. The only binding physical constraint
+is the blue theoretical roof.
+
+### Summary of Numbers
+
+| Dtype | Best BS | AI (FLOP/B) | Achieved TFLOPS | Theory roof | Measured BW ref | Above ref? |
+|-------|---------|------------|-----------------|-------------|-----------------|-----------|
+| FP8   | 32 | 64 | 130.9 | 512 | 209.4 | No |
+| INT12 | 32 | 32 | 138.1 | 256 | 104.7 | **Yes** (expected) |
+| INT8  | 32 | 64 |  46.9 | 512 | 209.4 | No |
+
+---
+
+## Finding 5 — Dequantization: Memory-Bound But Not HBM-Saturating
+
+### Question
+Is dequantization memory-bound or compute-bound? Why is HBM BW utilization low even for large tensors?
+
+### Arithmetic Intensity of the Dequant Kernel
+
+The dequantization step (`INT8 → BF16`) for a weight matrix of N×K elements:
+```
+Bytes read    = N × K × 1    (INT8, 1 byte each)
+Bytes written = N × K × 2    (BF16, 2 bytes each)
+FLOP          = N × K × 1    (one multiply per element: val × scale)
+
+AI = FLOP / (bytes_read + bytes_written) = N×K / (N×K × 3) = 1/3 ≈ 0.33 FLOP/byte
+```
+
+Ridge point on B200 (BF16): **281 FLOP/byte**. Dequantization at 0.33 is **850× below** the
+ridge — it is always deeply memory-bound regardless of tensor size.
+
+### Measured Dequant Kernel Performance (B200, INT8→BF16)
+
+| Weight matrix | Size (MB) | Actual latency | Ideal (8 TB/s) | BW util |
+|--------------|----------|---------------|----------------|---------|
+| 256×512      | 0.1      | 0.019 ms      | 0.000 ms       | 0.3%    |
+| 1024×1024    | 1        | 0.022 ms      | 0.000 ms       | 1.8%    |
+| 2048×4096    | 8        | 0.047 ms      | 0.003 ms       | 6.6%    |
+| 4096×14336   | 59       | 0.341 ms      | 0.022 ms       | 6.5%    |
+| 8192×14336   | 117      | 0.668 ms      | 0.044 ms       | 6.6%    |
+| 8192×28672   | 235      | 1.324 ms      | 0.088 ms       | 6.7%    |
+| 16384×28672  | 470      | 2.637 ms      | 0.176 ms       | 6.7%    |
+
+### Why Only 6.7% of HBM Bandwidth?
+
+Two distinct regimes:
+
+**Small tensors (<8 MB): kernel launch overhead dominates.**
+The CUDA kernel launch latency (~10–20 µs) exceeds the actual transfer time. A 1 MB tensor
+should take ~0.4 µs at 8 TB/s but the kernel costs ~22 µs total → ~2% BW utilization.
+
+**Large tensors (59–470 MB): kernel inefficiency dominates.**
+Latency scales linearly with size (confirming it is memory-bound, not compute-bound), but
+BW utilization plateaus at **~6.7%** rather than approaching 100%. The cause is that
+`W.to(torch.bfloat16) * scale` in PyTorch is not a fused kernel on B200 — it issues two
+separate element-wise passes (cast pass + multiply pass), neither of which uses the B200's
+full 8 TB/s HBM bandwidth. Actual achieved bandwidth: ~535 GB/s (~6.7% of 8 TB/s).
+
+### Consequence for INT8 Inference
+
+The dequant kernel adds **~0.34 ms of fixed overhead** per linear layer per forward pass,
+regardless of batch size. At BS=1 where the BF16 matmul takes only 0.026 ms, the dequant step
+is **13× longer than the actual matmul**. Even at BS=2048, dequant (0.34 ms) consumes ~25%
+of the total forward pass budget.
+
+This is why INT8 via bitsandbytes is slower than native FP8: the dequant overhead is a
+constant tax per layer that dwarfs the bandwidth savings from halving weight size.
+
+---
+
 ## Summary Table
 
 | Finding | Short Answer |
@@ -199,3 +331,5 @@ with small batch) show degraded perf/watt and should not be run in DataParallel 
 | Why does int8 inference underperform fp8? | fp8 runs natively on B200 Tensor Cores; int8 (bitsandbytes) dequantizes to fp16 before compute, adding overhead that cancels the memory savings |
 | Why is training MFU > 100%? | Arithmetic intensity and MFU were computed with wrong formulas. Real AI is ~6×bs×seq/bytes_per_param (thousands of FLOP/byte); training is deeply compute-bound |
 | Why is 2-GPU per-GPU power lower than 1-GPU? | The metric is per-GPU; work splits across two GPUs, halving per-GPU utilization. Total system power is always higher. Power vs utilization is sublinear due to a fixed ~145 W idle floor |
+| Why is INT12 above the measured BW reference line? | The green line is a population average (40.9% BW util) across all batch sizes; the INT12 point is the best case (BS=32, 65.1% BW util). Best-case points naturally exceed population-average lines. Only the theoretical roof is a physical bound |
+| Is dequantization memory-bound or compute-bound? | Memory-bound (AI = 0.33 FLOP/byte, 850× below the B200 ridge). But PyTorch's non-fused cast+multiply only achieves ~535 GB/s (6.7% of 8 TB/s HBM peak) — adding ~0.34 ms fixed overhead per layer regardless of batch size |
