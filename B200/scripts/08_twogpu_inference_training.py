@@ -233,19 +233,20 @@ def run_training_sweep():
     return df
 
 # ── Bottleneck analysis plot ──────────────────────────────────────────────────
-def plot_bottleneck_analysis(df, task_label, out_path):
+def plot_bottleneck_analysis(df, task_label, out_path, x_col=None):
     """Show how GPU util, mem BW util, and power shift with config and batch."""
     if df.empty: return
+    if x_col is None:
+        x_col = "batch_size" if "batch_size" in df.columns else "seq_len"
     fig, axes = plt.subplots(1, 3, figsize=(15, 5))
     fig.suptitle(f"Bottleneck Analysis — {task_label}: 1x vs 2x GPU", fontsize=12)
     metrics = [("gpu_util_pct","GPU Util (%)"), ("mem_bw_util_pct","Mem BW Util (%)"),
                ("mean_power_W","Power (W)")]
     for ax, (met, lbl) in zip(axes, metrics):
         for cfg, grp in df.groupby("config"):
-            x_col = "batch_size" if "batch_size" in df.columns else "seq_len"
             pivot = grp.groupby(x_col)[met].mean()
             ax.plot(pivot.index, pivot.values, "o-", lw=2, label=cfg)
-        ax.set_xlabel("Batch Size"); ax.set_ylabel(lbl)
+        ax.set_xlabel(x_col.replace("_", " ").title()); ax.set_ylabel(lbl)
         ax.set_title(lbl); ax.legend(fontsize=9); ax.grid(alpha=0.3)
     plt.tight_layout()
     save_fig(fig, out_path)
@@ -302,9 +303,10 @@ def main():
                 "Power vs Seq Length — 1x vs 2x GPU",
                 "Power (W)", f"{GOUT}/train_bf16_power_vs_seqlen.png")
             plot_bottleneck_analysis(
-                df_train.rename(columns={"seq_len": "batch_size"}),
+                df_train,
                 "Training BF16",
-                f"{GOUT}/train_bf16_bottleneck.png")
+                f"{GOUT}/train_bf16_bottleneck.png",
+                x_col="seq_len")
 
     print("\n" + "=" * 70)
     print("  2-GPU Comparison Complete.")
