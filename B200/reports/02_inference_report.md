@@ -60,7 +60,31 @@ _LLM inference is memory-bandwidth bound at BS=1 (AI ≈ batch_size for decode)_
 ## Key Findings
 - BS=1 decode is **memory-bound** (arithmetic intensity = 1 FLOP/byte, ridge at ~560).
 - Throughput scales nearly linearly with batch size up to memory capacity.
-- FP8 provides ~1.7× throughput vs BF16 at same batch size.
-- INT4 provides highest throughput but with quality trade-offs.
-- INT12 (simulated) falls between INT8 and BF16 in effective throughput.
+- FP8 provides ~2.7× throughput vs INT8 and is the recommended low-precision dtype on B200.
+- INT4 / INT8 via bitsandbytes are **slower than FP8** despite fewer bits — see analysis below.
+- INT12 (simulated) appears fast because it runs at BF16 speed with no real quantization overhead.
 - Power draw stays near TDP for large batches; idle for BS=1.
+
+## Analysis: Why Fewer Bits Does Not Mean Higher Throughput
+
+**Observed throughput order**: INT12 (simulated) > FP8 > INT8 — counter-intuitive given bit widths.
+
+| Dtype | Mean tok/s | Why |
+|-------|-----------|-----|
+| INT12 | 2680 | Stored and computed as BF16; no real quantization overhead |
+| FP8 | 2573 | Native B200 Tensor Cores (4500 TFLOPS); no dequantization needed |
+| INT8 | 951 | bitsandbytes dequantizes weights to FP16 before every matmul |
+
+**The INT8 penalty**: vLLM's INT8 path (bitsandbytes) stores weights in INT8 (saving bandwidth,
+same as FP8), then dequantizes to FP16 before the matmul (adding a kernel and extra bandwidth
+reads), then runs compute in FP16. The INT8 Tensor Cores are never used. The bandwidth savings
+are consumed by the dequantization step, leaving net throughput well below FP8.
+
+**FP8 on B200**: The Blackwell architecture executes FP8 matmuls natively at 4500 TFLOPS.
+vLLM uses `torch._scaled_mm` / cuBLAS FP8 paths with no format conversion. FP8 gets both the
+2× weight bandwidth reduction AND the full Tensor Core benefit.
+
+**Recommendation for B200 inference**: Use FP8 for low-precision deployment. Avoid INT8/INT4
+bitsandbytes paths unless the model does not fit in VRAM at all.
+
+> See `reports/06_analysis_findings.md` — Finding 1 for the full root-cause analysis.

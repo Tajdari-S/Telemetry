@@ -258,14 +258,15 @@ def main():
                     mean_util  = trows["gpu_util"].mean()
                     mean_bw    = trows["mem_util"].mean()
 
-                    # Scale MFU to full 8B model
+                    # MFU using actual model parameters and actual throughput
                     scaled_tokens_s = tokens_s * (MODEL_PARAMS_B / actual_params_B)
                     peak_TFLOPS = DTYPE_PEAK.get(dtype_label, DTYPE_PEAK["bf16"])
-                    mfu = compute_mfu(scaled_tokens_s, MODEL_PARAMS_B, peak_TFLOPS)
+                    mfu = compute_mfu(tokens_s, actual_params_B, peak_TFLOPS)
 
-                    # Roofline: training AI ≈ 6*P / (P * bytes_per_param) = 6 / bytes_per_param
+                    # Roofline: AI = 6 * bs * seq / bytes_per_param
+                    # (N_params cancels: FLOP=6*N*bs*seq, bytes=N*bpp → AI=6*bs*seq/bpp)
                     bpp = dcfg.get("bytes_per_param", 2)
-                    ai  = 6.0 / bpp
+                    ai  = 6.0 * bs * seq / bpp
 
                     print(f"OK | {tokens_s:.0f} tok/s | MFU={mfu:.1f}% | loss={loss_val:.3f} | power={mean_power:.0f}W")
                     all_results.append({
@@ -346,14 +347,17 @@ def main():
                               "Peak Memory Allocation by Dtype",
                               f"{GOUT}/training_memory_by_dtype.png")
 
-        # Roofline
+        # Roofline — use corrected AI and actual achieved TFLOPS
+        # actual_params_B may not be in scope here; derive from CSV or use stored value
+        _actual_B = df.attrs.get("actual_params_B", MODEL_PARAMS_B)
         roofline_pts = {}
         for dtype_label, grp in df.groupby("dtype"):
             best = grp.loc[grp["tokens_per_sec"].idxmax()]
             bpp = DTYPE_CONFIGS.get(dtype_label, {}).get("bytes_per_param", 2)
-            # Training FLOPS per token ≈ 6 * params
-            achieved_TFLOPS = best["scaled_tokens_per_sec"] * 6 * MODEL_PARAMS_B * 1e9 / 1e12
-            ai = 6.0 / bpp
+            # AI = 6 * bs * seq / bpp (N_params cancels in FLOP/byte ratio)
+            ai = 6.0 * best["batch_size"] * best["seq_len"] / bpp
+            # Achieved TFLOPS from actual throughput and actual model parameters
+            achieved_TFLOPS = best["tokens_per_sec"] * 6 * _actual_B * 1e9 / 1e12
             roofline_pts[dtype_label] = (ai, achieved_TFLOPS)
         plot_roofline(roofline_pts, dtype="bf16",
                       out_path=f"{GOUT}/roofline_training.png")
