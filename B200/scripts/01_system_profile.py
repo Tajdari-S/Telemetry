@@ -373,8 +373,19 @@ def main():
                   measured_bw_TBps=bw)
 
     # ─── Save JSON Summary ────────────────────────────────────────────────
-    # Remove non-serializable df
-    out_summary = {k: v for k, v in summary.items() if not isinstance(v, pd.DataFrame)}
+    # Remove non-serializable df; convert numpy scalars to Python native
+    def to_native(v):
+        if isinstance(v, dict):
+            return {kk: to_native(vv) for kk, vv in v.items()}
+        if isinstance(v, (np.integer,)):
+            return int(v)
+        if isinstance(v, (np.floating,)):
+            return float(v)
+        if isinstance(v, np.ndarray):
+            return v.tolist()
+        return v
+    out_summary = {k: to_native(v) for k, v in summary.items()
+                   if not isinstance(v, pd.DataFrame)}
     with open(f"{OUT}/system_profile_summary.json", "w") as f:
         json.dump(out_summary, f, indent=2)
 
