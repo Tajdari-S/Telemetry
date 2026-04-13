@@ -67,29 +67,33 @@ def plot_roofline(points: dict, dtype: str = "bf16", out_path: str = "roofline.p
     """
     points: dict of label -> (arithmetic_intensity, measured_TFLOPS)
     """
-    peak   = DTYPE_PEAK.get(dtype, DTYPE_PEAK["bf16"])
-    bw     = measured_bw_TBps if measured_bw_TBps else MEM_BW_TBps
-    ridge  = ridge_point(peak, bw)
+    peak  = DTYPE_PEAK.get(dtype, DTYPE_PEAK["bf16"])
+    # Primary roof always uses theoretical peak BW — measured BW is a reference line only
+    bw    = MEM_BW_TBps
+    ridge = ridge_point(peak, bw)
 
-    ai_range = np.logspace(-3, 4, 500)
+    ai_range  = np.logspace(-3, 4, 500)
     roof_vals = np.minimum(ai_range * bw, peak)
 
     fig, ax = plt.subplots(figsize=(10, 6))
-    ax.loglog(ai_range, roof_vals, "b-", lw=2.5, label=f"Roofline ({dtype.upper()})")
+    ax.loglog(ai_range, roof_vals, "b-", lw=2.5,
+              label=f"Roofline ({dtype.upper()}, peak {bw:.0f} TB/s HBM)")
     ax.axvline(ridge, color="b", ls="--", lw=1, alpha=0.5)
     ax.text(ridge * 1.05, peak * 0.6,
-            f"Ridge={ridge:.1f} FLOP/B", color="b", fontsize=9)
+            f"Ridge={ridge:.0f} FLOP/B", color="b", fontsize=9)
 
+    # Measured BW as optional secondary reference — never used as primary ceiling
     if measured_bw_TBps and measured_bw_TBps < MEM_BW_TBps:
         roof_meas = np.minimum(ai_range * measured_bw_TBps, peak)
         ax.loglog(ai_range, roof_meas, "g--", lw=1.5,
-                  label=f"Measured BW ({measured_bw_TBps:.2f} TB/s)")
+                  label=f"Measured BW ({measured_bw_TBps:.2f} TB/s, reference)")
 
     colors = plt.cm.tab10(np.linspace(0, 1, len(points)))
     for (label, (ai, perf)), col in zip(points.items(), colors):
         ax.scatter([ai], [perf], color=col, zorder=5, s=80)
+        # Efficiency vs theoretical roofline (always peak BW)
         pct = 100.0 * perf / roofline_perf(ai, peak, bw)
-        ax.annotate(f"{label}\n({pct:.0f}%)", (ai, perf),
+        ax.annotate(f"{label}\n({pct:.0f}% of roof)", (ai, perf),
                     textcoords="offset points", xytext=(6, 4), fontsize=8, color=col)
 
     ax.set_xlabel("Arithmetic Intensity (FLOP/byte)", fontsize=12)
