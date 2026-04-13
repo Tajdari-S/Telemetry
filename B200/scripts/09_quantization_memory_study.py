@@ -244,17 +244,73 @@ def main():
     plt.tight_layout()
     save_fig(fig, f"{GOUT}/latency_vs_batch.png")
 
-    # ── Plot 2: Roofline ──────────────────────────────────────────────────────
-    # Pick the highest-M (most compute-bound) row for each matmul path
-    roofline_pts = {}
+    # ── Plot 2: Roofline — multi-dtype ceilings, all-M trajectories ──────────
+    # Each path has its own compute ceiling; show all M values as trajectories
+    # to visualise the memory-bound → compute-bound transition per path.
+    PATH_PEAK = {           # correct ceiling per execution path
+        "bf16":         DTYPE_PEAK["bf16"],   # 2250 TFLOPS
+        "fp8_native":   DTYPE_PEAK["fp8"],    # 4500 TFLOPS
+        "int8_native":  DTYPE_PEAK["int8"],   # 4500 TOPS (same as fp8 numerically)
+        "int8_dequant": DTYPE_PEAK["bf16"],   # dequant → bf16 matmul, capped at BF16
+    }
+    COLORS = {"bf16": "#2196F3", "fp8_native": "#4CAF50",
+              "int8_native": "#FF9800", "int8_dequant": "#F44336",
+              "dequant_only": "#9C27B0"}
+
+    ai_range = np.logspace(-2, 4, 600)
+    bw = MEM_BW_TBps
+
+    fig, ax = plt.subplots(figsize=(11, 7))
+
+    # Draw one roofline per distinct compute ceiling (avoid duplicate lines)
+    drawn_peaks = set()
+    for path, peak in PATH_PEAK.items():
+        if peak in drawn_peaks: continue
+        drawn_peaks.add(peak)
+        roof = np.minimum(ai_range * bw, peak)
+        label = f"{'BF16' if peak == DTYPE_PEAK['bf16'] else 'FP8/INT8'} roof ({peak:.0f} TFLOPS)"
+        ax.loglog(ai_range, roof, lw=2, ls="-",
+                  color="#2196F3" if peak == DTYPE_PEAK["bf16"] else "#4CAF50",
+                  label=label)
+        ridge = peak / bw
+        ax.axvline(ridge, color="#2196F3" if peak == DTYPE_PEAK["bf16"] else "#4CAF50",
+                   ls="--", lw=1, alpha=0.5)
+        ax.text(ridge * 1.05, peak * 0.55,
+                f"ridge={ridge:.0f}", fontsize=8,
+                color="#2196F3" if peak == DTYPE_PEAK["bf16"] else "#4CAF50")
+
+    # Memory slope label
+    ax.text(0.05, bw * 0.05 * 1.4, f"Mem BW slope\n({bw:.0f} TB/s)",
+            fontsize=8, color="gray", rotation=42)
+
+    # Plot each matmul path as a trajectory across all M values
     for path, grp in df.groupby("path"):
-        best = grp.loc[grp["M"].idxmax()]
-        roofline_pts[path] = (best["ai"], best["tflops"])
-    # Dequant-only: use largest weight size for best BW efficiency
+        grp = grp.sort_values("M")
+        c = COLORS.get(path, "gray")
+        ax.loglog(grp["ai"], grp["tflops"], "o-", lw=1.8, ms=6,
+                  color=c, label=path)
+        # Annotate last point (highest M)
+        last = grp.iloc[-1]
+        ax.annotate(f"M={int(last['M'])}", (last["ai"], last["tflops"]),
+                    textcoords="offset points", xytext=(5, 3), fontsize=7, color=c)
+
+    # Dequant-only: single point (doesn't depend on M)
     dq_best = df_dq.loc[df_dq["weight_MB"].idxmax()]
-    roofline_pts["dequant_only"] = (dq_best["ai"], dq_best["tflops"])
-    plot_roofline(roofline_pts, dtype="bf16",
-                  out_path=f"{GOUT}/roofline_quant_paths.png")
+    ax.scatter([dq_best["ai"]], [dq_best["tflops"]], marker="*", s=150,
+               color=COLORS["dequant_only"], zorder=6, label="dequant_only (470 MB weight)")
+    ax.annotate("dequant\nonly", (dq_best["ai"], dq_best["tflops"]),
+                textcoords="offset points", xytext=(5, -12), fontsize=7,
+                color=COLORS["dequant_only"])
+
+    ax.set_xlabel("Arithmetic Intensity (FLOP/byte)", fontsize=12)
+    ax.set_ylabel("Performance (TFLOPS)", fontsize=12)
+    ax.set_title("Roofline — Quantization Paths on NVIDIA B200\n"
+                 "Trajectories show M=1→2048 batch tokens; each path has its own compute ceiling",
+                 fontsize=11)
+    ax.legend(fontsize=9, loc="upper left")
+    ax.grid(True, which="both", alpha=0.3)
+    plt.tight_layout()
+    save_fig(fig, f"{GOUT}/roofline_quant_paths.png")
 
     # ── Plot 3: Dequant overhead — latency breakdown ──────────────────────────
     # For each M: bar showing int8_native vs int8_dequant, and the difference = dequant cost
