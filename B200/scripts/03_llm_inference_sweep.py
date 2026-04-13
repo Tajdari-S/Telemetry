@@ -222,7 +222,8 @@ def main():
     for dtype_label in dtype_list:
         dtype_cfg = DTYPES_VLLM.get(dtype_label, DTYPES_VLLM["bf16"])
         custom_bits = dtype_cfg.get("_custom_quant_bits", None)
-        dtype_bytes  = {"fp16": 2, "bf16": 2, "fp8": 1, "int8": 1, "int4": 0.5, "int12": 1.5}
+        # int12 is simulated in BF16 memory, so it occupies 2 bytes/param at runtime
+        dtype_bytes  = {"fp16": 2, "bf16": 2, "fp8": 1, "int8": 1, "int4": 0.5, "int12": 2}
         db = dtype_bytes.get(dtype_label, 2)
 
         print(f"\n{'='*60}")
@@ -357,13 +358,12 @@ def main():
             g = grp.dropna(subset=["throughput_tps", "arith_intensity"])
             if len(g) == 0:
                 continue
-            # Convert tok/s to effective TFLOPS
-            # Each token ≈ 2*P FLOPs (P = model params)
+            # Use the single best row so AI and TFLOPS are consistent
+            best = g.loc[g["throughput_tps"].idxmax()]
             flops_per_tok = 2 * model_params_B * 1e9
-            avg_tps = g["throughput_tps"].max()
-            achieved_TFLOPS = avg_tps * flops_per_tok / 1e12
-            avg_ai = g["arith_intensity"].mean()
-            roofline_pts[dtype_label] = (avg_ai, achieved_TFLOPS)
+            achieved_TFLOPS = best["throughput_tps"] * flops_per_tok / 1e12
+            ai = best["arith_intensity"]
+            roofline_pts[dtype_label] = (ai, achieved_TFLOPS)
         if roofline_pts:
             plot_roofline(roofline_pts, dtype="bf16",
                           out_path=f"{GOUT}/roofline_inference.png",
