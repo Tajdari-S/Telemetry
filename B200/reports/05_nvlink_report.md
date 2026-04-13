@@ -1,5 +1,5 @@
 # NVLink vs PCIe vs 1x GPU Report — NVIDIA B200
-_Generated: 2026-04-13 03:08 UTC_
+_Generated: 2026-04-13 03:47 UTC_
 
 ## NVLink18 Configuration
 - 18 NVLink4 links between GPU 0 and GPU 1

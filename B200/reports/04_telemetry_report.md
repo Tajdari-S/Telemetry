@@ -1,5 +1,5 @@
 # Tier-1 NVML Telemetry Report — NVIDIA B200
-_Generated: 2026-04-13 03:08 UTC_
+_Generated: 2026-04-13 03:47 UTC_
 
 ## Methodology
 Follows SPAR-GPU-monitoring Tier-1 telemetry protocol: pynvml sampled at 20 Hz during each workload. No DCGM required (Tier-1 = pynvml only).
