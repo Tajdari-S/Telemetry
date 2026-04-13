@@ -50,8 +50,6 @@ TDP_TEMP = 85.0    # approx throttle temp
 
 # ── Extended system-level sampler ─────────────────────────────────────────────
 class SystemSample:
-    __slots__ = ["ts","cpu_pct","ram_used_GB","net_rx_MB","net_tx_MB",
-                 "disk_read_MB","disk_write_MB"]
     def __init__(self):
         self.ts = time.time()
         self.cpu_pct = psutil.cpu_percent(interval=None)
@@ -298,16 +296,16 @@ def w_cufft(gpu_ids, duration=20):
 
 def w_nbody(gpu_ids, duration=20):
     dev = f"cuda:{gpu_ids[0]}"
-    N = 8192
-    pos = torch.randn(N, 3, device=dev, dtype=torch.float32)
-    vel = torch.zeros(N, 3, device=dev, dtype=torch.float32)
+    N = 2048   # reduced to fit in memory (8192^2 * 3 * 4 bytes = 768 GB)
+    pos  = torch.randn(N, 3, device=dev, dtype=torch.float32)
+    vel  = torch.zeros(N, 3, device=dev, dtype=torch.float32)
     mass = torch.ones(N, device=dev, dtype=torch.float32)
     t_end = time.time() + duration; iters = 0
     while time.time() < t_end:
         r   = pos.unsqueeze(0) - pos.unsqueeze(1)   # [N,N,3]
-        d2  = (r ** 2).sum(-1) + 1e-4               # [N,N]
+        d2  = (r ** 2).sum(-1) + 1e-4
         d3  = d2 ** 1.5
-        F   = (r * (mass.unsqueeze(0) / d3.unsqueeze(-1))).sum(1)
+        F   = (r * (mass.view(1, N, 1) / d3.unsqueeze(-1))).sum(1)
         vel = vel + F * 0.001
         pos = pos + vel * 0.001
         iters += 1
