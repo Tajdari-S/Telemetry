@@ -1,0 +1,57 @@
+{
+  "1xGPU_GEMM": {
+    "mean_gpu_util": 97.68339768339769,
+    "max_gpu_util": 100.0,
+    "mean_power_W": 964.5824922779923,
+    "max_power_W": 1015.109,
+    "mean_temp_C": 53.72007722007722,
+    "mean_mem_util": 19.78957528957529,
+    "mean_sm_clock_MHz": 1380.69305019305
+  },
+  "2xGPU_GEMM": {
+    "mean_gpu_util": 98.08754208754209,
+    "max_gpu_util": 100.0,
+    "mean_power_W": 970.0031447811448,
+    "max_power_W": 1030.059,
+    "mean_temp_C": 54.35016835016835,
+    "mean_mem_util": 19.7003367003367,
+    "mean_sm_clock_MHz": 1389.675084175084
+  },
+  "NVLink_P2P": {
+    "mean_gpu_util": 48.932203389830505,
+    "max_gpu_util": 99.0,
+    "mean_power_W": 356.8095016949153,
+    "max_power_W": 380.68,
+    "mean_temp_C": 38.43050847457627,
+    "mean_mem_util": 11.884745762711864,
+    "mean_sm_clock_MHz": 1965.0,
+    "measured_bw_GBps": 796.0
+  },
+  "1xGPU_Transformer": {
+    "mean_gpu_util": 92.4905303030303,
+    "max_gpu_util": 99.0,
+    "mean_power_W": 923.6121268939394,
+    "max_power_W": 1005.912,
+    "mean_temp_C": 54.99242424242424,
+    "mean_mem_util": 21.90909090909091,
+    "mean_sm_clock_MHz": 1821.030303030303
+  },
+  "2xGPU_Transformer": {
+    "mean_gpu_util": 58.962046204620464,
+    "max_gpu_util": 99.0,
+    "mean_power_W": 641.2534669966997,
+    "max_power_W": 1017.081,
+    "mean_temp_C": 43.506600660066006,
+    "mean_mem_util": 27.02970297029703,
+    "mean_sm_clock_MHz": 1874.5049504950496
+  },
+  "Idle": {
+    "mean_gpu_util": 0.0,
+    "max_gpu_util": 0.0,
+    "mean_power_W": 197.27007584269663,
+    "max_power_W": 201.746,
+    "mean_temp_C": 35.71067415730337,
+    "mean_mem_util": 0.0,
+    "mean_sm_clock_MHz": 1965.0
+  }
+}

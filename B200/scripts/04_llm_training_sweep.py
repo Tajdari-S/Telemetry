@@ -19,6 +19,7 @@ import os, sys, time, json, gc, argparse
 import torch
 import torch.nn as nn
 import torch.optim as optim
+import torch.ao.quantization
 import numpy as np
 import pandas as pd
 
@@ -58,26 +59,28 @@ class LlamaLayer(nn.Module):
     def __init__(self, cfg):
         super().__init__()
         d = cfg["d_model"]; h = cfg["n_heads"]; kv = cfg["n_kv_heads"]
+        self.n_heads    = h
+        self.n_kv_heads = kv
+        self.head_dim   = d // h
         self.attn_q = nn.Linear(d, d, bias=False)
-        self.attn_k = nn.Linear(d, d // (h // kv), bias=False)
-        self.attn_v = nn.Linear(d, d // (h // kv), bias=False)
+        self.attn_k = nn.Linear(d, kv * self.head_dim, bias=False)
+        self.attn_v = nn.Linear(d, kv * self.head_dim, bias=False)
         self.attn_o = nn.Linear(d, d, bias=False)
         self.ffn    = LlamaFFN(d, cfg["ffn_dim"])
         self.ln1    = nn.RMSNorm(d)
         self.ln2    = nn.RMSNorm(d)
 
     def forward(self, x):
-        h = x.shape[2] // 32   # head_dim
-        q = self.attn_q(self.ln1(x))
-        k = self.attn_k(self.ln1(x))
-        v = self.attn_v(self.ln1(x))
-        # Simplified attention (no flash-attn for training test)
         B, S, D = x.shape
-        q = q.view(B, S, 32, -1).transpose(1, 2)
-        k = k.view(B, S, -1,  h).transpose(1, 2) if k.shape[-1] % h == 0 else k.view(B, S, 1, D//32).transpose(1, 2)
-        v = v.view(B, S, -1,  h).transpose(1, 2) if v.shape[-1] % h == 0 else v.view(B, S, 1, D//32).transpose(1, 2)
-        k = k.expand(-1, 32, -1, -1)
-        v = v.expand(-1, 32, -1, -1)
+        h, kv, hd = self.n_heads, self.n_kv_heads, self.head_dim
+        groups = h // kv
+        xn = self.ln1(x)
+        q = self.attn_q(xn).view(B, S, h,  hd).transpose(1, 2)            # [B,h,S,hd]
+        k = self.attn_k(xn).view(B, S, kv, hd).transpose(1, 2)            # [B,kv,S,hd]
+        v = self.attn_v(xn).view(B, S, kv, hd).transpose(1, 2)
+        # GQA: repeat KV heads to match Q heads
+        k = k.unsqueeze(2).expand(-1, -1, groups, -1, -1).reshape(B, h, S, hd)
+        v = v.unsqueeze(2).expand(-1, -1, groups, -1, -1).reshape(B, h, S, hd)
         attn = torch.nn.functional.scaled_dot_product_attention(q, k, v)
         attn = attn.transpose(1, 2).contiguous().view(B, S, D)
         x = x + self.attn_o(attn)
@@ -205,7 +208,6 @@ def main():
         scale_factor = MODEL_PARAMS_B / (actual_params_B * n_layers / n_layers)
 
         if args.num_gpus > 1:
-            import torch.distributed as dist
             model = nn.DataParallel(model, device_ids=gpu_ids)
 
         # Apply int12 simulation
@@ -216,11 +218,17 @@ def main():
                         sc = p.abs().max() / 2047.0 + 1e-8
                         p.data = (p / sc).round().clamp(-2048, 2047) * sc
 
-        # Apply int8/int4 dynamic quantization (inference-mode only; training in bf16)
+        # Apply int8/int4 weight quantization simulation (training in bf16 with quantized weights)
         if dtype_label in ("int8", "int4"):
-            print(f"    Note: {dtype_label} quantization applied to Linear layers (simulated)")
-            import torch.ao.quantization
-            if dtype_label == "int8":
+            print(f"    Note: {dtype_label} weight-quant simulation — training in BF16 with {dtype_label} weights")
+            bits = 8 if dtype_label == "int8" else 4
+            max_val = 2 ** (bits - 1) - 1
+            with torch.no_grad():
+                for p in model.parameters():
+                    if p.dim() >= 2:
+                        sc = p.abs().max() / max_val + 1e-8
+                        p.data = (p / sc).round().clamp(-max_val, max_val) * sc
+            if False:  # int8 CPU dynamic quant (CPU-only, shown for reference)
                 model = torch.ao.quantization.quantize_dynamic(
                     model.cpu(), {nn.Linear}, dtype=torch.qint8).to(device)
 

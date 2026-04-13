@@ -1,0 +1,150 @@
+{
+  "allreduce": [
+    {
+      "size_mb": 64,
+      "allreduce_bw_GBps": 955.1125210339701,
+      "allreduce_latency_us": 134.01562348008156
+    },
+    {
+      "size_mb": 256,
+      "allreduce_bw_GBps": 1100.916397098698,
+      "allreduce_latency_us": 465.0671035051346
+    },
+    {
+      "size_mb": 1024,
+      "allreduce_bw_GBps": 1154.731281829012,
+      "allreduce_latency_us": 1773.5728062689304
+    },
+    {
+      "size_mb": 4096,
+      "allreduce_bw_GBps": 1168.8308228409685,
+      "allreduce_latency_us": 7008.713185787201
+    }
+  ],
+  "nvlink_sustained_bw_GBps": 778.0,
+  "gemm_tflops": {
+    "1xGPU_4096": {
+      "config": "1xGPU",
+      "tflops": 1507.3732611553708,
+      "gemm_time_ms": 0.09117778390645981
+    },
+    "2xGPU_ind_4096": {
+      "config": "2xGPU_independent",
+      "tflops": 3008.636850193144,
+      "tflops_per_gpu": {
+        "0": 1514.7864799476713,
+        "1": 1493.8503702454723
+      }
+    },
+    "2xGPU_NVLink_4096": {
+      "config": "2xGPU_NVLink_TP",
+      "tflops": 1024.6730992894375,
+      "gemm_time_ms": 0.13412956148386002,
+      "nvlink_comm_MB": 33.554432
+    },
+    "1xGPU_8192": {
+      "config": "1xGPU",
+      "tflops": 1633.6381245266882,
+      "gemm_time_ms": 0.6730447895824909
+    },
+    "2xGPU_ind_8192": {
+      "config": "2xGPU_independent",
+      "tflops": 3346.890530684653,
+      "tflops_per_gpu": {
+        "0": 1702.655880387808,
+        "1": 1644.234650296845
+      }
+    },
+    "2xGPU_NVLink_8192": {
+      "config": "2xGPU_NVLink_TP",
+      "tflops": 1798.0760856245633,
+      "gemm_time_ms": 0.6114933826029301,
+      "nvlink_comm_MB": 134.217728
+    },
+    "1xGPU_16384": {
+      "config": "1xGPU",
+      "tflops": 1489.5761334312513,
+      "gemm_time_ms": 5.905097983777523
+    },
+    "2xGPU_ind_16384": {
+      "config": "2xGPU_independent",
+      "tflops": 3005.9167078498494,
+      "tflops_per_gpu": {
+        "1": 1556.8756991429652,
+        "0": 1449.041008706884
+      }
+    },
+    "2xGPU_NVLink_16384": {
+      "config": "2xGPU_NVLink_TP",
+      "tflops": 2127.2599229974753,
+      "gemm_time_ms": 4.1349404118955135,
+      "nvlink_comm_MB": 536.870912
+    }
+  },
+  "p2p_bw": [
+    {
+      "size_mb": 64,
+      "src_dev": 0,
+      "dst_dev": 1,
+      "bidirectional": false,
+      "bw_GBps": 631.4752828290161,
+      "latency_us": 101.34996846318245
+    },
+    {
+      "size_mb": 64,
+      "src_dev": 0,
+      "dst_dev": 1,
+      "bidirectional": true,
+      "bw_GBps": 573.6232206317617,
+      "latency_us": 223.14298897981644
+    },
+    {
+      "size_mb": 256,
+      "src_dev": 0,
+      "dst_dev": 1,
+      "bidirectional": false,
+      "bw_GBps": 730.9917740035348,
+      "latency_us": 350.20913928747177
+    },
+    {
+      "size_mb": 256,
+      "src_dev": 0,
+      "dst_dev": 1,
+      "bidirectional": true,
+      "bw_GBps": 741.618276238076,
+      "latency_us": 690.3821229934692
+    },
+    {
+      "size_mb": 1024,
+      "src_dev": 0,
+      "dst_dev": 1,
+      "bidirectional": false,
+      "bw_GBps": 769.5309744496723,
+      "latency_us": 1330.6806795299053
+    },
+    {
+      "size_mb": 1024,
+      "src_dev": 0,
+      "dst_dev": 1,
+      "bidirectional": true,
+      "bw_GBps": 771.7792233699045,
+      "latency_us": 2653.6086201667786
+    },
+    {
+      "size_mb": 4096,
+      "src_dev": 0,
+      "dst_dev": 1,
+      "bidirectional": false,
+      "bw_GBps": 777.3338023652501,
+      "latency_us": 5269.293561577797
+    },
+    {
+      "size_mb": 4096,
+      "src_dev": 0,
+      "dst_dev": 1,
+      "bidirectional": true,
+      "bw_GBps": 780.4108041697302,
+      "latency_us": 10497.03560769558
+    }
+  ]
+}
